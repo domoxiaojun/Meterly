@@ -396,7 +396,7 @@ func TestRevokedTokenRejected(t *testing.T) {
 	a.Close()
 }
 
-// TestLoad20Hosts 20 台主机并发上报压测(每台每分钟 ~60 条记录,模拟 6 小时)。
+// TestLoad20Hosts 20 台主机并发上报压测(每台每分钟 ~60 条记录,模拟 6 小时;-race 下 2 小时)。
 func TestLoad20Hosts(t *testing.T) {
 	if testing.Short() {
 		t.Skip()
@@ -414,7 +414,11 @@ func TestLoad20Hosts(t *testing.T) {
 	srv.Now = clk.Now
 	hs := httptest.NewServer(srv.Handler())
 	defer hs.Close()
-	const hosts, minutes, perMin = 20, 360, 60
+	const hosts, perMin = 20, 60
+	minutes := 360 // 模拟 6 小时
+	if raceEnabled {
+		minutes = 120 // -race 下模拟 2 小时(仍覆盖两次整点维护),见 race_on_test.go
+	}
 	tokens := make([]string, hosts)
 	for i := range tokens {
 		tokens[i], _ = st.CreateHost(context.Background(), fmt.Sprintf("load-%02d", i), store.HostOpts{})

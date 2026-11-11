@@ -102,6 +102,7 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 		billingIface = meta.Inventory.DefaultInterface
 	}
 	seenSeq := map[int64]bool{}
+	coverage := map[string]*[2]int64{}
 	ipIDs := map[string]int64{}
 	for i := range recs {
 		record := recs[i]
@@ -152,8 +153,11 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 				}
 			}
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO collection_coverage(host_id,kind,first_ts,last_ts) VALUES(?,?,?,?) ON CONFLICT(host_id,kind) DO UPDATE SET first_ts=MIN(first_ts,excluded.first_ts),last_ts=MAX(last_ts,excluded.last_ts)`, h.ID, r.Kind, r.TS-60, r.TS); err != nil {
-			return res, err
+		// 覆盖区间按 kind 在内存里合并,批末每个 kind 只写一次(原来每条记录一次 upsert)。
+		if c, ok := coverage[r.Kind]; ok {
+			c[0], c[1] = min(c[0], r.TS-60), max(c[1], r.TS)
+		} else {
+			coverage[r.Kind] = &[2]int64{r.TS - 60, r.TS}
 		}
 		if r.Kind == proto.KindSite && r.Site != nil {
 			copy := *r
@@ -168,6 +172,11 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 			Spread(r.PrevTS, r.TS, r.RX, r.TX, func(ts int64, rx, tx uint64) { place(r, ts, rx, tx) })
 		} else {
 			place(r, r.TS-1, r.RX, r.TX) // 覆盖 (prev, ts],整点样本归入前一分钟
+		}
+	}
+	for kind, c := range coverage {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO collection_coverage(host_id,kind,first_ts,last_ts) VALUES(?,?,?,?) ON CONFLICT(host_id,kind) DO UPDATE SET first_ts=MIN(first_ts,excluded.first_ts),last_ts=MAX(last_ts,excluded.last_ts)`, h.ID, kind, c[0], c[1]); err != nil {
+			return res, err
 		}
 	}
 	for name, health := range meta.Collectors {

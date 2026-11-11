@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/netip"
 
 	"github.com/domoxiaojun/Meterly/internal/proto"
@@ -21,11 +22,19 @@ func ensureIP(ctx context.Context, tx *sql.Tx, address string) (int64, error) {
 			family = 4
 		}
 	}
+	// 常见情况是 IP 已存在:先查一次;不存在才插入,省掉每个 IP 一条空 INSERT。
+	var id int64
+	e := tx.QueryRowContext(ctx, `SELECT id FROM ips WHERE address=?`, address).Scan(&id)
+	if e == nil {
+		return id, nil
+	}
+	if !errors.Is(e, sql.ErrNoRows) {
+		return 0, e
+	}
 	if _, e := tx.ExecContext(ctx, `INSERT INTO ips(address,packed,family) VALUES(?,?,?) ON CONFLICT(address) DO NOTHING`, address, packed, family); e != nil {
 		return 0, e
 	}
-	var id int64
-	e := tx.QueryRowContext(ctx, `SELECT id FROM ips WHERE address=?`, address).Scan(&id)
+	e = tx.QueryRowContext(ctx, `SELECT id FROM ips WHERE address=?`, address).Scan(&id)
 	return id, e
 }
 func ingestSite(ctx context.Context, tx *sql.Tx, host int64, r *proto.Record, ipID int64) error {
