@@ -614,7 +614,7 @@ func ProposalConfig(d *DetectResult, serverURL, tokenFile, caFile, stateDir stri
 		CAFile:     caFile,
 		AllowHTTP:  allowHTTP,
 		StateDir:   stateDir,
-		Interval:   Duration{time.Minute},
+		Interval:   Duration{Duration: time.Minute},
 		Collectors: CollectorsConfig{},
 	}
 	if c.StateDir == "" {
@@ -636,7 +636,7 @@ func ProposalConfig(d *DetectResult, serverURL, tokenFile, caFile, stateDir stri
 		if u, _ := col.Config["url"].(string); u != "" {
 			c.Collectors.Singbox.URL = u
 		}
-		c.Collectors.Singbox.PollInterval = Duration{10 * time.Second}
+		c.Collectors.Singbox.PollInterval = Duration{Duration: 10 * time.Second}
 	}
 	if col, ok := d.Collectors["site"]; ok && col.Enabled {
 		c.Collectors.Site.Enabled = true
@@ -652,7 +652,7 @@ func ProposalConfig(d *DetectResult, serverURL, tokenFile, caFile, stateDir stri
 		if iface, _ := col.Config["wg_interface"].(string); iface != "" {
 			c.Collectors.Netbird.WGInterface = iface
 		}
-		c.Collectors.Netbird.Timeout = Duration{8 * time.Second}
+		c.Collectors.Netbird.Timeout = Duration{Duration: 8 * time.Second}
 	}
 	if col, ok := d.Collectors["xray"]; ok && col.Enabled {
 		c.Collectors.Xray.Enabled = true
@@ -662,7 +662,7 @@ func ProposalConfig(d *DetectResult, serverURL, tokenFile, caFile, stateDir stri
 		if s, _ := col.Config["server"].(string); s != "" {
 			c.Collectors.Xray.Server = s
 		}
-		c.Collectors.Xray.Timeout = Duration{5 * time.Second}
+		c.Collectors.Xray.Timeout = Duration{Duration: 5 * time.Second}
 	}
 	c.applyDefaults()
 	return c

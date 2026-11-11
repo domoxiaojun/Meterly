@@ -65,7 +65,7 @@ func TestM3AgentToPanel(t *testing.T) {
 
 	acfg := &agent.Config{
 		ServerURL: ts.URL, TokenFile: tokFile, AllowHTTP: true, StateDir: filepath.Join(dir, "state"),
-		Interval: agent.Duration{time.Minute}, BatchSize: 500, HTTPTimeout: agent.Duration{5 * time.Second},
+		Interval: agent.Duration{Duration: time.Minute}, BatchSize: 500, HTTPTimeout: agent.Duration{Duration: 5 * time.Second},
 		Collectors: agent.CollectorsConfig{
 			Site: agent.SiteConfig{Enabled: true, FromStart: true, AllowDirs: []string{dir},
 				Sources: []agent.SiteSource{{Path: logp, Site: "media.example.com", Format: "main"}}},
