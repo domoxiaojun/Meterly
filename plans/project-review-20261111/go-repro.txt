@@ -1,0 +1,20 @@
+=== RUN   TestReviewTickRetriesPendingAfterWriteFailure
+    project_review_test.go:51: recovered buffer has 100 bytes, want 200; records=[{Seq:2 TS:1794384120 PrevTS:1794384060 Kind:xray Dim1:test Dim2: RX:100 TX:0}]
+--- FAIL: TestReviewTickRetriesPendingAfterWriteFailure (0.03s)
+=== RUN   TestReviewRotationPreservesUnreadTail
+    project_review_test.go:71: after rotation got 200 bytes / 1 requests, want 300 bytes / 2 requests
+--- FAIL: TestReviewRotationPreservesUnreadTail (0.00s)
+FAIL
+FAIL	github.com/domoxiaojun/Meterly/internal/agent	0.341s
+=== RUN   TestReviewLast1hOverviewMatchesMinutes
+    project_review_test.go:39: overview=[{Billed:200}]; minute series total=300
+--- FAIL: TestReviewLast1hOverviewMatchesMinutes (0.01s)
+=== RUN   TestReviewAllHostTopMatchesHourlyAcrossTimezones
+    project_review_test.go:63: IP top total=100, inbound total=200 for same period
+--- FAIL: TestReviewAllHostTopMatchesHourlyAcrossTimezones (0.00s)
+=== RUN   TestReviewCustomRetentionKeepsHistoricalOverview
+    project_review_test.go:80: overview=[{Billed:0}]; retained day total=100
+--- FAIL: TestReviewCustomRetentionKeepsHistoricalOverview (0.00s)
+FAIL
+FAIL	github.com/domoxiaojun/Meterly/internal/server	0.348s
+FAIL

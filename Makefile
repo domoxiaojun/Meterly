@@ -26,7 +26,7 @@ dist:
 	  echo "→ dist/$$b-linux-$$a"; \
 	  CGO_ENABLED=0 GOOS=linux GOARCH=$$a go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o dist/$$b-linux-$$a ./cmd/$$b || exit 1; \
 	done; done
-	@$(MAKE) --no-print-directory checksums
+	@scripts/package.sh
 
 checksums:
 	@cd dist && sha256sum meterly-* | grep -v SHA256SUMS > SHA256SUMS && cat SHA256SUMS

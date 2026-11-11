@@ -1,258 +1,28 @@
-<!DOCTYPE html>
-<html lang="zh-Hans">
+<!doctype html>
+<html lang="zh-Hans" data-theme="dark">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark" />
-  <title>Meterly</title>
-  <link rel="stylesheet" href="/style.css" />
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light">
+<title>Meterly · 流量分析</title><link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="bar">
-    <div class="brand">
-      <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <div>
-        <h1>Meterly</h1>
-        <p class="sub" id="clock">—</p>
-      </div>
-    </div>
-    <div class="controls">
-      <div class="seg" id="hostSeg" role="tablist" aria-label="主机"></div>
-      <div class="seg" id="periodSeg" role="tablist" aria-label="周期">
-        <button data-period="last1h">近 1 小时</button>
-        <button data-period="current" class="on">本期</button>
-        <button data-period="previous">上期</button>
-        <button data-period="custom">自定义</button>
-      </div>
-      <div class="custom hidden" id="customBox">
-        <input type="date" id="startDate" aria-label="开始日期" />
-        <span class="dim">→</span>
-        <input type="date" id="endDate" aria-label="结束日期" />
-        <button class="btn" id="applyCustom">应用</button>
-      </div>
-    </div>
-  </header>
-
-  <main>
-    <section class="hero" id="hero"></section>
-
-    <section class="hosts" id="hosts"></section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <h2>流量曲线</h2>
-          <p class="hint" id="seriesHint">—</p>
-        </div>
-        <div class="controls">
-          <div class="seg small" id="ifaceSeg">
-            <button data-iface="eth0" class="on">eth0</button>
-            <button data-iface="wt0">wt0</button>
-          </div>
-          <div class="seg small" id="granSeg">
-            <button data-gran="minute" class="hidden">分钟</button>
-            <button data-gran="hour">小时</button>
-            <button data-gran="day" class="on">天</button>
-          </div>
-        </div>
-      </div>
-      <div class="legend"><span class="lg rx"></span>入站 rx<span class="lg tx"></span>出站 tx</div>
-      <div class="chart-box"><canvas id="seriesChart"></canvas></div>
-    </section>
-
-    <section class="solo">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2 id="ipTitle">来源 IP × 入站</h2>
-            <p class="hint" id="ipHint">sing-box 载荷字节 · 上传 = 客户端发出,下载 = 发往客户端 · 点击行查看小时曲线</p>
-          </div>
-          <div class="controls">
-            <div class="seg small" id="ipView">
-              <button data-view="ip" class="on">IP</button>
-              <button data-view="country">国家</button>
-              <button data-view="asn">ASN</button>
-            </div>
-            <span class="pill" id="ipTotal">—</span>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="tbl clickable" id="ipTable">
-            <thead></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <section class="grid even">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>入站</h2>
-            <p class="hint"><span class="tag relay">中转</span> direct 端口转发,来源 IP 是中转机 · 点击行看曲线</p>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="tbl clickable" id="inbTable">
-            <thead><tr><th>入站</th><th class="num">IP</th><th class="num">合计</th><th class="share">占比</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>对账 · 网卡总量拆解</h2>
-            <p class="hint" id="reconHint">计费网卡总量 = sing-box(估算)+ 站点 + NetBird + 未归因</p>
-          </div>
-          <div class="seg small" id="factorSeg" title="sing-box 载荷经过网卡的次数">
-            <button data-factor="2" class="on">载荷 ×2</button>
-            <button data-factor="1">×1</button>
-          </div>
-        </div>
-        <div id="recon"></div>
-        <p class="note">各来源口径不同、彼此有重叠,<b>不能并列相加</b>:网卡含 WireGuard 封装与全部进程;sing-box 为代理载荷,
-          直连出站时同一份数据进出网卡各一次(×2,未含协议开销;出站走 wt0/WARP 时应选 ×1);站点只算下行(请求结束时刻归因);
-          NetBird 为对等端累计(与 wt0 网卡计数口径不同,仅作参考)。「未归因」= 网卡总量 − 已归因估算,为负说明估算偏大或口径重叠。</p>
-      </div>
-    </section>
-
-    <section class="grid even" id="m3Views">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>站点</h2>
-            <p class="hint">nginx / 1Panel OpenResty access_log · 按请求<b>结束时刻</b>归因(Emby 等长流会记在结束那一小时,总量准确、曲线后移)</p>
-          </div>
-          <span class="pill" id="siteTotal">—</span>
-        </div>
-        <div class="table-wrap">
-          <table class="tbl clickable" id="siteTable">
-            <thead><tr><th>站点</th><th class="num">请求</th><th class="num">下行</th><th class="num">上行</th><th class="share">状态</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>NetBird 对等端</h2>
-            <p class="hint">wt0 上各 peer 的累计增量</p>
-          </div>
-          <span class="pill" id="nbTotal">—</span>
-        </div>
-        <div class="table-wrap">
-          <table class="tbl" id="nbTable">
-            <thead><tr><th>对等端</th><th>IP</th><th class="num">收</th><th class="num">发</th><th class="share">占比</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <section class="solo hidden" id="xraySec">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>xray</h2>
-            <p class="hint">stats API 按入站 / 用户累计,<b>没有来源 IP</b></p>
-          </div>
-          <span class="pill" id="xrayTotal">—</span>
-        </div>
-        <div class="grid even">
-          <div class="table-wrap"><table class="tbl" id="xrayInbTable"><thead><tr><th>入站</th><th class="num">上行</th><th class="num">下行</th><th class="share">占比</th></tr></thead><tbody></tbody></table></div>
-          <div class="table-wrap"><table class="tbl" id="xrayUserTable"><thead><tr><th>用户</th><th class="num">上行</th><th class="num">下行</th><th class="share">占比</th></tr></thead><tbody></tbody></table></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="solo">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>机器与采集器</h2>
-            <p class="hint">未开启的采集器显示「未启用」,不会显示为 0</p>
-          </div>
-          <button class="btn small" id="enrollBtn">生成注册码</button>
-        </div>
-        <div class="table-wrap" id="collWrap"></div>
-        <form class="prov-form hidden" id="enrollForm">
-          <div class="pf-title">生成一次性注册码</div>
-          <input type="text" id="enrollHost" placeholder="主机名,如 host-new" autocomplete="off" />
-          <label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:8px;">
-            <input type="checkbox" id="enrollReissue" /> 允许给已存在的主机换发 token(会让旧 token 立即失效)
-          </label>
-          <div class="pf-actions"><button class="btn" type="submit">生成</button><button class="btn ghost" type="button" id="enrollCancel">取消</button></div>
-          <p class="hint">默认 24 小时、一次核销。明文只显示这一次,请立刻在新机器上用于安装。</p>
-          <p class="err" id="enrollErr"></p>
-          <p class="note hidden" id="enrollCode"></p>
-        </form>
-      </div>
-    </section>
-
-    <section class="solo">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>服务商数字比对</h2>
-            <p class="hint">手工录入服务商后台显示的本周期用量,按各机计费口径比对(准确性的最终依据)</p>
-          </div>
-          <button class="btn small" id="vnstatBtn" title="上传 vnstat --json 输出,与本系统网卡数据逐小时比对">vnstat 自检</button>
-        </div>
-        <div class="table-wrap short">
-          <table class="tbl" id="provTable">
-            <thead><tr><th>主机</th><th>周期</th><th class="num">本系统</th><th class="num">服务商</th><th class="num">差值</th><th class="num">偏差</th><th></th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <form class="prov-form hidden" id="provForm">
-          <div class="pf-title" id="provFormTitle">—</div>
-          <input type="text" id="provValue" placeholder="服务商显示的用量,如 1.23 TB / 850 GiB" autocomplete="off" />
-          <input type="text" id="provNote" placeholder="备注(可选)" maxlength="200" autocomplete="off" />
-          <div class="pf-actions"><button class="btn" type="submit">保存</button><button class="btn ghost" type="button" id="provCancel">取消</button></div>
-          <p class="hint">单位照抄后台:GB/TB 按 1000 进制,GiB/TiB 按 1024 进制。</p>
-          <p class="err" id="provErr"></p>
-        </form>
-        <input type="file" id="vnstatFile" accept=".json,application/json" class="hidden" />
-      </div>
-    </section>
-
-    <p class="foot">
-      口径说明:网卡计数含 WireGuard 封装与全部进程流量;sing-box 为代理载荷字节,二者有重叠,不能相加。
-      「未归因」= sing-box 全局计数增量 − 逐连接增量(轮询间隙内开合的短连接、连接关闭前最后一段)。
-      「其他」= 每小时 / 每天 Top-N 之外合并,合计与总量一致。时间均为 <span id="tzName">Asia/Singapore</span>。
-      归属地在本机离线查询,IP 不发往任何第三方。
-    </p>
-    <p class="foot attr"><a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">IP Geolocation by DB-IP</a>
-      (DB-IP Lite,<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>)<span id="geoStatus"></span></p>
-  </main>
-
-  <div class="drawer hidden" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
-    <div class="drawer-card">
-      <div class="drawer-head">
-        <div><h2 id="drawerTitle">—</h2><p class="hint" id="drawerSub"></p></div>
-        <button class="btn ghost" id="drawerClose" aria-label="关闭">关闭</button>
-      </div>
-      <div class="drawer-kv" id="drawerKV"></div>
-      <div class="legend" id="drawerLegend"><span class="lg rx"></span>上传 / 入<span class="lg tx"></span>下载 / 出</div>
-      <div class="chart-box sm" id="drawerChartBox"><canvas id="drawerChart"></canvas></div>
-      <div id="drawerBody"></div>
-    </div>
-  </div>
-
-  <div class="login hidden" id="login">
-    <form class="login-card" id="loginForm">
-      <span class="mark big" aria-hidden="true"><i></i><i></i><i></i></span>
-      <h2>Meterly</h2>
-      <p class="hint">请输入面板口令</p>
-      <input type="password" id="loginToken" autocomplete="current-password" placeholder="面板口令" />
-      <button class="btn wide" type="submit">进入</button>
-      <p class="err" id="loginErr"></p>
-    </form>
-  </div>
-
-  <script src="/vendor/chart.umd.min.js"></script>
-  <script src="/app.js"></script>
-</body>
-</html>
+<a class="skip-link" href="#content">跳到主要内容</a>
+<div class="shell">
+<aside class="sidebar"><a class="brand" href="#/overview"><span class="brand-mark" aria-hidden="true">M</span><span>Meterly<small>看清流量的去向</small></span></a>
+<nav aria-label="主要导航">
+<a href="#/overview" data-nav="overview">总览</a><a href="#/sites" data-nav="sites">网站</a><a href="#/ips" data-nav="ips">IP 分析</a><a href="#/hosts" data-nav="hosts">主机</a><a href="#/billing" data-nav="billing">对账</a><a href="#/system" data-nav="system">系统</a>
+</nav><div class="sidebar-bottom"><span id="version">Meterly</span><label>外观 <select id="theme" aria-label="外观主题"><option value="system">跟随系统</option><option value="dark">深色</option><option value="light">浅色</option></select></label><button id="logout" class="button quiet">退出登录</button></div></aside>
+<main id="content" tabindex="-1"><header class="page-header"><div><p class="eyebrow">TRAFFIC INTELLIGENCE</p><h1 id="pageTitle">流量总览</h1><p id="pageSubtitle" class="muted">源站日志流量 · 统计到达服务器的请求</p></div><div class="header-actions"><span id="freshness" class="muted" aria-live="polite"></span><button id="refresh" class="button">刷新</button></div></header>
+<form id="filters" class="filter-bar" aria-label="筛选流量">
+<label>时间范围<select name="period"><option value="today">今天</option><option value="yesterday">昨天</option><option value="last7d">近 7 天</option><option value="last30d">近 30 天</option><option value="last1h">近一小时</option><option value="current">本计费周期</option><option value="previous">上计费周期</option><option value="day">指定一天</option><option value="custom">自定义范围</option></select></label>
+<label id="startLabel" hidden>日期<input name="start" type="date"></label><label id="endLabel" hidden>结束日期<input name="end" type="date"></label>
+<label>主机<select name="host"><option value="all">全部主机</option></select></label>
+<label>趋势粒度<select name="gran"><option value="auto">自动</option><option value="minute">分钟</option><option value="hour">小时</option><option value="day">天</option></select></label>
+<button class="button primary" type="submit">应用筛选</button><span id="timezone" class="muted"></span>
+</form>
+<div id="page" aria-live="polite"></div>
+<footer>源站日志、代理载荷与网卡计费口径分别统计。CDN 缓存命中且未回源的请求不计入源站日志。<br><a href="https://db-ip.com/" target="_blank" rel="noopener noreferrer">IP Geolocation by DB-IP</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></footer>
+</main></div>
+<div id="login" class="login-overlay" hidden><form id="loginForm" class="login-card"><span class="brand-mark" aria-hidden="true">M</span><h1>欢迎使用 Meterly</h1><p class="muted">登录后查看流量与管理采集主机</p><label>面板口令<input id="loginToken" type="password" autocomplete="current-password" required></label><button class="button primary" type="submit">登录</button><p id="loginError" class="error" role="alert"></p></form></div>
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="/vendor/chart.umd.min.js"></script><script type="module" src="/app.js"></script>
+</body></html>

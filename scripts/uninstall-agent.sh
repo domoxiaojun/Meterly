@@ -1,34 +1,19 @@
 #!/usr/bin/env bash
-# 卸载 meterly-agent(同时清理旧版 trafficstat-agent unit,如果还在)。
-# 不触碰旧版 Python trafficstat、sing-box、nginx、vnstat。
-# 默认保留数据目录;加 --purge 才删除配置、缓冲,以及 hosts 中的 meterly.internal / trafficstat.internal。
+# 卸载 v2 服务，默认保留配置与数据；--purge 仅清除当前 v2 路径，旧档案保留。
 set -euo pipefail
+ROOT=${METERLY_ROOT:-}
+SYSTEMCTL=${SYSTEMCTL:-systemctl}
 PURGE=0
-[ "${1:-}" = "--purge" ] && PURGE=1
-ROOT="${METERLY_ROOT:-}"
-SYSTEMCTL="${SYSTEMCTL:-systemctl}"
-
-"$SYSTEMCTL" disable --now meterly-agent 2>/dev/null || true
-"$SYSTEMCTL" disable --now trafficstat-agent 2>/dev/null || true
-rm -f "${ROOT}/etc/systemd/system/meterly-agent.service"
+case "${1:-}" in '') ;; --purge) PURGE=1;; *) echo '用法: uninstall-agent.sh [--purge]' >&2; exit 2;; esac
+"$SYSTEMCTL" stop meterly-agent-updater.service 2>/dev/null || true
+"$SYSTEMCTL" disable --now meterly-agent.service 2>/dev/null || true
+rm -f "${ROOT}/etc/systemd/system/meterly-agent.service" "${ROOT}/etc/systemd/system/meterly-agent-updater.service"
 rm -rf "${ROOT}/etc/systemd/system/meterly-agent.service.d"
-rm -f "${ROOT}/etc/systemd/system/trafficstat-agent.service"
-rm -rf "${ROOT}/etc/systemd/system/trafficstat-agent.service.d"
-"$SYSTEMCTL" daemon-reload 2>/dev/null || true
-rm -f "${ROOT}/usr/local/bin/meterly-agent" "${ROOT}/usr/local/bin/trafficstat-agent"
-rm -f "${ROOT}/usr/local/sbin/uninstall-meterly-agent" "${ROOT}/usr/local/sbin/uninstall-trafficstat-agent"
+"$SYSTEMCTL" daemon-reload
+rm -f "${ROOT}/usr/local/bin/meterly-agent" "${ROOT}/usr/local/bin/meterly-agent.previous"
 if [ "$PURGE" -eq 1 ]; then
-  rm -rf "${ROOT}/etc/meterly" "${ROOT}/var/lib/meterly" "${ROOT}/etc/trafficstat" "${ROOT}/var/lib/trafficstat"
-  if [ -f "${ROOT}/etc/hosts" ]; then
-    tmp=$(mktemp)
-    grep -v -e '[[:space:]]meterly\.internal\([[:space:]]\|$\)' \
-            -e '[[:space:]]trafficstat\.internal\([[:space:]]\|$\)' \
-            "${ROOT}/etc/hosts" > "$tmp" || true
-    cat "$tmp" > "${ROOT}/etc/hosts"
-    rm -f "$tmp"
-  fi
-  echo "purged configs, state, and meterly.internal / trafficstat.internal hosts entries"
+  rm -f "${ROOT}/etc/meterly/agent.json" "${ROOT}/etc/meterly/agent.token"
+  rm -rf "${ROOT}/var/lib/meterly-v2"
 else
-  echo "left /etc/meterly and /var/lib/meterly in place (use --purge to delete)"
+  echo '已卸载服务，保留 /etc/meterly 的 agent 配置与 /var/lib/meterly-v2 数据'
 fi
-echo "agent uninstalled"

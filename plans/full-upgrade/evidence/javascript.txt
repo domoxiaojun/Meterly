@@ -1,0 +1,16 @@
+
+> test
+> node --test tests/*.test.js
+
+✔ TLS ingress exposes enrollment, push and outbound control; panel denies agent paths (0.908417ms)
+✔ fresh database, one scheduler, isolated updater and complete release assets (1.151833ms)
+✔ URL filters preserve dates, IPv6, site and pagination (0.907458ms)
+✔ untrusted keys escape HTML; byte units have defined boundaries (20.559417ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 66.981458

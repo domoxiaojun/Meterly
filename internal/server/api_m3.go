@@ -109,7 +109,7 @@ func (s *Server) handleSites(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "周期参数无效")
 		return
 	}
-	rows, err := s.st.SiteTotals(r.Context(), factTable(p, now), ids, p.From, p.To)
+	rows, err := s.st.SiteTotals(r.Context(), factTableFor(s.st, p, now), ids, p.From, p.To)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "内部错误")
 		return
@@ -136,7 +136,7 @@ func (s *Server) handleSiteIPs(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "周期参数无效")
 		return
 	}
-	rows, tot, err := s.st.SiteIPs(r.Context(), factTable(p, now), ids, site, p.From, p.To, 50)
+	rows, tot, err := s.st.SiteIPs(r.Context(), factTableFor(s.st, p, now), ids, site, p.From, p.To, 50)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "内部错误")
 		return
@@ -158,7 +158,7 @@ func (s *Server) handleNetbird(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "周期参数无效")
 		return
 	}
-	rows, tot, err := s.st.Dim1Rank(r.Context(), factTable(p, now), ids, proto.KindNetbird, p.From, p.To)
+	rows, tot, err := s.st.Dim1Rank(r.Context(), factTableFor(s.st, p, now), ids, proto.KindNetbird, p.From, p.To)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "内部错误")
 		return
@@ -180,12 +180,12 @@ func (s *Server) handleXray(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "周期参数无效")
 		return
 	}
-	inb, itot, err := s.st.Dim1Rank(r.Context(), factTable(p, now), ids, proto.KindXray, p.From, p.To)
+	inb, itot, err := s.st.Dim1Rank(r.Context(), factTableFor(s.st, p, now), ids, proto.KindXray, p.From, p.To)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "内部错误")
 		return
 	}
-	users, utot, err := s.st.Dim1Rank(r.Context(), factTable(p, now), ids, proto.KindXrayUser, p.From, p.To)
+	users, utot, err := s.st.Dim1Rank(r.Context(), factTableFor(s.st, p, now), ids, proto.KindXrayUser, p.From, p.To)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "内部错误")
 		return

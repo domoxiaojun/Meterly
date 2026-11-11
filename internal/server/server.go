@@ -26,15 +26,21 @@ import (
 )
 
 type Server struct {
-	cfg   *Config
-	st    *store.Store
-	geo   *geo.DB
-	log   *slog.Logger
-	web   fs.FS
-	Now   func() time.Time
-	mux   *http.ServeMux
-	locMu sync.Mutex
-	locs  map[string]*time.Location
+	cfg         *Config
+	st          *store.Store
+	geo         *geo.DB
+	log         *slog.Logger
+	web         fs.FS
+	Now         func() time.Time
+	ReleaseGet  func(context.Context, string) ([]byte, error)
+	mux         *http.ServeMux
+	locMu       sync.Mutex
+	locs        map[string]*time.Location
+	jobMu       sync.Mutex
+	runningJobs map[string]bool
+	bgCtx       context.Context
+	bgCancel    context.CancelFunc
+	jobWG       sync.WaitGroup
 
 	ingestRL *limiter // 每来源 IP
 	authFail *limiter // 鉴权失败
@@ -46,35 +52,54 @@ type Server struct {
 func (s *Server) Geo() *geo.DB { return s.geo }
 
 func New(cfg *Config, st *store.Store, web fs.FS, log *slog.Logger) *Server {
+	st.Retention = cfg.Retention
+	st.Retention.Defaults()
 	s := &Server{cfg: cfg, st: st, geo: geo.Open(cfg.Geo.Dir), web: web, log: log, Now: time.Now, locs: map[string]*time.Location{},
 		ingestRL: newLimiter(5, 60), authFail: newLimiter(0.2, 10), apiRL: newLimiter(20, 100),
 		enrollRL: newLimiter(0.2, 5)}
+	s.ReleaseGet = releaseGet
+	s.runningJobs = map[string]bool{}
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	m := http.NewServeMux()
-	m.HandleFunc("POST /api/v1/ingest", s.handleIngest)
-	m.HandleFunc("POST /api/v1/enroll/redeem", s.handleEnrollRedeem)
+	m.HandleFunc("POST /api/v2/ingest", s.handleIngest)
+	m.HandleFunc("POST /api/v2/enroll/redeem", s.handleEnrollRedeem)
 	m.HandleFunc("POST /api/login", s.handleLogin)
 	m.HandleFunc("POST /api/logout", s.handleLogout)
-	m.HandleFunc("GET /api/v1/me", s.panel(s.handleMe))
-	m.HandleFunc("GET /api/v1/overview", s.panel(s.handleOverview))
-	m.HandleFunc("GET /api/v1/series", s.panel(s.handleSeries))
-	m.HandleFunc("GET /api/v1/singbox/top", s.panel(s.handleTopIPs))
-	m.HandleFunc("GET /api/v1/singbox/inbounds", s.panel(s.handleInbounds))
-	m.HandleFunc("GET /api/v1/singbox/ip", s.panel(s.handleIPDetail))
-	m.HandleFunc("GET /api/v1/singbox/geo", s.panel(s.handleGeoSummary))
-	m.HandleFunc("GET /api/v1/reconcile", s.panel(s.handleReconcile))
-	m.HandleFunc("GET /api/v1/provider", s.panel(s.handleProviderList))
-	m.HandleFunc("POST /api/v1/provider", s.panel(s.jsonOnly(s.handleProviderSet)))
-	m.HandleFunc("DELETE /api/v1/provider", s.panel(s.handleProviderDelete))
-	m.HandleFunc("POST /api/v1/vnstat/check", s.panel(s.jsonOnly(s.handleVnstatCheck)))
-	m.HandleFunc("GET /api/v1/geo/status", s.panel(s.handleGeoStatus))
-	m.HandleFunc("GET /api/v1/sites", s.panel(s.handleSites))
-	m.HandleFunc("GET /api/v1/sites/ips", s.panel(s.handleSiteIPs))
-	m.HandleFunc("GET /api/v1/netbird", s.panel(s.handleNetbird))
-	m.HandleFunc("GET /api/v1/xray", s.panel(s.handleXray))
-	m.HandleFunc("GET /api/v1/collectors", s.panel(s.handleCollectors))
-	m.HandleFunc("GET /api/v1/enroll", s.panel(s.handleEnrollList))
-	m.HandleFunc("POST /api/v1/enroll", s.panel(s.jsonOnly(s.handleEnrollCreate)))
-	m.HandleFunc("DELETE /api/v1/enroll", s.panel(s.handleEnrollDelete))
+	m.HandleFunc("GET /api/v2/me", s.panel(s.handleMe))
+	m.HandleFunc("GET /api/v2/overview", s.panel(s.handleDashboard))
+	m.HandleFunc("GET /api/v2/billing/overview", s.panel(s.handleOverview))
+	m.HandleFunc("GET /api/v2/analytics/rank", s.panel(s.handleAnalysis))
+	m.HandleFunc("GET /api/v2/analytics/series", s.panel(s.handleAnalysisSeries))
+	m.HandleFunc("GET /api/v2/analytics/export", s.panel(s.handleAnalysisExport))
+	m.HandleFunc("GET /api/v2/analytics/options", s.panel(s.handleAnalysisOptions))
+	m.HandleFunc("GET /api/v2/hosts", s.panel(s.handleHostList))
+	m.HandleFunc("PUT /api/v2/hosts/{host}", s.panel(s.jsonOnly(s.handleHostSettings)))
+	m.HandleFunc("PUT /api/v2/hosts/{host}/config", s.panel(s.jsonOnly(s.handleConfigSet)))
+	m.HandleFunc("POST /api/v2/hosts/{host}/upgrade", s.panel(s.jsonOnly(s.handleUpgradeCreate)))
+	m.HandleFunc("GET /api/v2/upgrades", s.panel(s.handleUpgradeList))
+	m.HandleFunc("GET /api/v2/releases", s.panel(s.handleRelease))
+	m.HandleFunc("GET /api/v2/system", s.panel(s.handleSystem))
+	m.HandleFunc("POST /api/v2/system/jobs/{kind}", s.panel(s.jsonOnly(s.handleRunJob)))
+	m.HandleFunc("GET /api/v2/install", s.panel(s.handleInstallInfo))
+	m.HandleFunc("GET /api/v2/agent/control", s.handleAgentControl)
+	m.HandleFunc("POST /api/v2/agent/upgrade/status", s.handleAgentUpgradeStatus)
+	m.HandleFunc("GET /api/v2/series", s.panel(s.handleSeries))
+	m.HandleFunc("GET /api/v2/singbox/top", s.panel(s.handleTopIPs))
+	m.HandleFunc("GET /api/v2/singbox/inbounds", s.panel(s.handleInbounds))
+	m.HandleFunc("GET /api/v2/singbox/ip", s.panel(s.handleIPDetail))
+	m.HandleFunc("GET /api/v2/singbox/geo", s.panel(s.handleGeoSummary))
+	m.HandleFunc("GET /api/v2/reconcile", s.panel(s.handleReconcile))
+	m.HandleFunc("GET /api/v2/provider", s.panel(s.handleProviderList))
+	m.HandleFunc("POST /api/v2/provider", s.panel(s.jsonOnly(s.handleProviderSet)))
+	m.HandleFunc("DELETE /api/v2/provider", s.panel(s.handleProviderDelete))
+	m.HandleFunc("POST /api/v2/vnstat/check", s.panel(s.jsonOnly(s.handleVnstatCheck)))
+	m.HandleFunc("GET /api/v2/geo/status", s.panel(s.handleGeoStatus))
+	m.HandleFunc("GET /api/v2/netbird", s.panel(s.handleNetbird))
+	m.HandleFunc("GET /api/v2/xray", s.panel(s.handleXray))
+	m.HandleFunc("GET /api/v2/collectors", s.panel(s.handleCollectors))
+	m.HandleFunc("GET /api/v2/enroll", s.panel(s.handleEnrollList))
+	m.HandleFunc("POST /api/v2/enroll", s.panel(s.jsonOnly(s.handleEnrollCreate)))
+	m.HandleFunc("DELETE /api/v2/enroll", s.panel(s.handleEnrollDelete))
 	m.HandleFunc("GET /healthz", s.handleHealthz)
 	if web != nil {
 		m.Handle("GET /", http.FileServerFS(web))
@@ -94,7 +119,7 @@ func (s *Server) Handler() http.Handler {
 		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		sw := &statusWriter{ResponseWriter: w, code: 200}
 		s.mux.ServeHTTP(sw, r)
-		if strings.HasPrefix(r.URL.Path, "/api/") && (sw.code >= 400 || r.URL.Path != "/api/v1/ingest") {
+		if strings.HasPrefix(r.URL.Path, "/api/") && (sw.code >= 400 || r.URL.Path != "/api/v2/ingest") {
 			s.log.Info("http", "method", r.Method, "path", r.URL.Path, "status", sw.code, "ms", time.Since(start).Milliseconds(), "ip", s.clientIP(r))
 		}
 	})
@@ -185,6 +210,10 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusRequestEntityTooLarge, "单批记录过多")
 		return
 	}
+	if b.Meta.Protocol != proto.Version {
+		writeErr(w, http.StatusUpgradeRequired, "需要新版 agent 协议 v2，请成套升级")
+		return
+	}
 	res, err := s.st.Ingest(r.Context(), h, s.loc(h.TZ), b.Meta, b.Records, ip, now)
 	if err != nil {
 		s.log.Error("ingest 写入失败", "host", h.Name, "err", err.Error())
@@ -194,7 +223,8 @@ func (s *Server) handleIngest(w http.ResponseWriter, r *http.Request) {
 	if res.Rejected > 0 {
 		s.log.Warn("ingest 跳过非法记录", "host", h.Name, "rejected", res.Rejected)
 	}
-	writeJSON(w, http.StatusOK, proto.IngestResponse{Accepted: res.Accepted, Duplicates: res.Duplicates, Host: h.Name, MaxSeq: res.MaxSeq})
+	_ = s.enrichIPs(r.Context(), proto.MaxRecordsPerBatch)
+	writeJSON(w, http.StatusOK, proto.IngestResponse{Accepted: res.Accepted, Duplicates: res.Duplicates, Rejected: res.Rejected, Host: h.Name, MaxSeq: res.MaxSeq})
 }
 
 func (s *Server) loc(name string) *time.Location {
@@ -305,3 +335,5 @@ func (s *Server) RunMaintenance(ctx context.Context, every time.Duration) {
 		}
 	}
 }
+
+func (s *Server) Close() { s.bgCancel(); s.jobWG.Wait(); s.geo.Close() }

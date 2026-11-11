@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS hosts(
   tz            TEXT NOT NULL DEFAULT 'Asia/Singapore',
   reset_day     INTEGER NOT NULL DEFAULT 9,    -- 计费周期重置日
   billing_mode  TEXT NOT NULL DEFAULT 'both',  -- both|tx|rx|max
-  billing_iface TEXT NOT NULL DEFAULT 'eth0',
+  billing_iface TEXT NOT NULL DEFAULT '',
+  settings_version INTEGER NOT NULL DEFAULT 0,
   quota_bytes   INTEGER NOT NULL DEFAULT 0,    -- 0 = 未设置
   note          TEXT NOT NULL DEFAULT '',
   last_seen     INTEGER NOT NULL DEFAULT 0,
@@ -84,13 +85,26 @@ CREATE INDEX IF NOT EXISTS enroll_host ON enroll_codes(host_name);
 `
 
 type Store struct {
-	W *sql.DB // 写连接(单连接串行化)
-	R *sql.DB // 读连接池
+	W         *sql.DB // 写连接(单连接串行化)
+	R         *sql.DB // 读连接池
+	Retention Retention
 }
 
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
+	}
+	// Inspect existing files read-only before any WAL or schema write.
+	if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+		ro, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+		if err != nil {
+			return nil, err
+		}
+		err = checkSchema(ro)
+		ro.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
 	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)"
 	w, err := sql.Open("sqlite", dsn)
@@ -98,7 +112,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	w.SetMaxOpenConns(1)
-	if _, err := w.Exec(Schema); err != nil {
+	if err := checkSchema(w); err != nil {
 		w.Close()
 		return nil, fmt.Errorf("初始化数据库失败: %w", err)
 	}
@@ -113,7 +127,9 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	r.SetMaxOpenConns(8)
-	return &Store{W: w, R: r}, nil
+	ret := Retention{}
+	ret.Defaults()
+	return &Store{W: w, R: r, Retention: ret}, nil
 }
 
 func (s *Store) Close() error {
@@ -124,28 +140,29 @@ func (s *Store) Close() error {
 // ---- hosts / token ----
 
 type Host struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	CreatedAt    int64  `json:"created_at"`
-	RevokedAt    int64  `json:"revoked_at"`
-	TZ           string `json:"tz"`
-	ResetDay     int    `json:"reset_day"`
-	BillingMode  string `json:"billing_mode"`
-	BillingIface string `json:"billing_iface"`
-	QuotaBytes   int64  `json:"quota_bytes"`
-	Note         string `json:"note"`
-	LastSeen     int64  `json:"last_seen"`
-	LastIP       string `json:"-"`
-	AgentVersion string `json:"agent_version"`
-	MetaJSON     string `json:"-"`
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	CreatedAt       int64  `json:"created_at"`
+	RevokedAt       int64  `json:"revoked_at"`
+	TZ              string `json:"tz"`
+	ResetDay        int    `json:"reset_day"`
+	BillingMode     string `json:"billing_mode"`
+	BillingIface    string `json:"billing_iface"`
+	QuotaBytes      int64  `json:"quota_bytes"`
+	Note            string `json:"note"`
+	LastSeen        int64  `json:"last_seen"`
+	LastIP          string `json:"-"`
+	AgentVersion    string `json:"agent_version"`
+	MetaJSON        string `json:"-"`
+	SettingsVersion int64  `json:"settings_version"`
 }
 
-const hostCols = `id,name,created_at,revoked_at,tz,reset_day,billing_mode,billing_iface,quota_bytes,note,last_seen,last_ip,agent_version,meta_json`
+const hostCols = `id,name,created_at,revoked_at,tz,reset_day,billing_mode,billing_iface,quota_bytes,note,last_seen,last_ip,agent_version,meta_json,settings_version`
 
 func scanHost(sc interface{ Scan(...any) error }) (*Host, error) {
 	h := &Host{}
 	err := sc.Scan(&h.ID, &h.Name, &h.CreatedAt, &h.RevokedAt, &h.TZ, &h.ResetDay, &h.BillingMode, &h.BillingIface,
-		&h.QuotaBytes, &h.Note, &h.LastSeen, &h.LastIP, &h.AgentVersion, &h.MetaJSON)
+		&h.QuotaBytes, &h.Note, &h.LastSeen, &h.LastIP, &h.AgentVersion, &h.MetaJSON, &h.SettingsVersion)
 	return h, err
 }
 
@@ -241,9 +258,7 @@ func (o *HostOpts) fill() {
 	if o.BillingMode == "" {
 		o.BillingMode = "both"
 	}
-	if o.BillingIface == "" {
-		o.BillingIface = "eth0"
-	}
+
 }
 
 // RotateToken 生成新 token(旧 token 立即失效),同时解除吊销。

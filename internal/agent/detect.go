@@ -119,7 +119,7 @@ func Detect(sys *DetectSys, only, skip []string) (*DetectResult, error) {
 		if len(names) == 0 {
 			r.Collectors["netdev"] = DetectedCollector{Detected: false, Reason: "未找到默认路由网卡"}
 		} else {
-			r.Collectors["netdev"] = DetectedCollector{Detected: true, Enabled: true, Reason: "默认路由网卡 + 探测到的 wt0",
+			r.Collectors["netdev"] = DetectedCollector{Detected: true, Enabled: true, Reason: "实际发现的网卡（默认路由优先）",
 				Config: map[string]any{"enabled": true, "interfaces": names}}
 		}
 	} else {
@@ -180,6 +180,8 @@ func detectIfaces(sys *DetectSys) ([]DetectedIface, []string) {
 				name := strings.TrimSpace(line[:i])
 				if name == "wt0" {
 					add("wt0", "NetBird 网卡")
+				} else {
+					add(name, "发现的网卡")
 				}
 			}
 		}
@@ -618,7 +620,7 @@ func ProposalConfig(d *DetectResult, serverURL, tokenFile, caFile, stateDir stri
 		Collectors: CollectorsConfig{},
 	}
 	if c.StateDir == "" {
-		c.StateDir = "/var/lib/meterly"
+		c.StateDir = "/var/lib/meterly-v2"
 	}
 	if col, ok := d.Collectors["netdev"]; ok && col.Enabled {
 		c.Collectors.NetDev.Enabled = true

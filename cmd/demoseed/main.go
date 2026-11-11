@@ -109,7 +109,7 @@ func main() {
 			}},
 			Records: recs[i:min(i+4000, len(recs))]}
 		body, _ := json.Marshal(batch)
-		req, _ := http.NewRequest("POST", *url+"/api/v1/ingest", bytes.NewReader(body))
+		req, _ := http.NewRequest("POST", *url+"/api/v2/ingest", bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+tok)
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := cl.Do(req)

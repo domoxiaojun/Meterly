@@ -27,6 +27,8 @@ jobs:
             dist/meterly-agent-linux-arm64 \
             dist/meterly-server-linux-amd64 \
             dist/meterly-server-linux-arm64 \
+            dist/meterly-linux-amd64.tar.gz \
+            dist/meterly-linux-arm64.tar.gz \
             dist/SHA256SUMS \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes

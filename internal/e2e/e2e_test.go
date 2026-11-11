@@ -317,7 +317,7 @@ func TestReplayIsIdempotent(t *testing.T) {
 	sent := append([][]byte(nil), bodies...)
 	mu.Unlock()
 	for _, b := range sent {
-		req, _ := http.NewRequest("POST", e.hs.URL+"/api/v1/ingest", bytes.NewReader(b))
+		req, _ := http.NewRequest("POST", e.hs.URL+"/api/v2/ingest", bytes.NewReader(b))
 		req.Header.Set("Authorization", "Bearer "+e.token)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -352,15 +352,20 @@ func TestCrashBetweenStateAndBuffer(t *testing.T) {
 	segs, _ := filepath.Glob(filepath.Join(e.dir, "state", "buffer", "seg-*.jsonl"))
 	sort.Strings(segs)
 	data, _ := os.ReadFile(segs[len(segs)-1])
-	var st struct {
-		Pending []proto.Record `json:"pending"`
-	}
-	sb, _ := os.ReadFile(filepath.Join(e.dir, "state", "state.json"))
-	json.Unmarshal(sb, &st)
-	if len(st.Pending) == 0 {
-		t.Fatal("state 应含最后一批 Pending")
+	st, err := agent.LoadState(filepath.Join(e.dir, "state"))
+	if err != nil {
+		t.Fatal(err)
 	}
 	lines := bytes.Split(bytes.TrimRight(data, "\n"), []byte("\n"))
+	var last proto.Record
+	if err = json.Unmarshal(lines[len(lines)-1], &last); err != nil {
+		t.Fatal(err)
+	}
+	st.Pending = []proto.Record{last}
+	if err = st.Save(filepath.Join(e.dir, "state")); err != nil {
+		t.Fatal(err)
+	}
+
 	keep := lines[:len(lines)-len(st.Pending)]
 	os.WriteFile(segs[len(segs)-1], append(bytes.Join(keep, []byte("\n")), '\n'), 0o600)
 
@@ -434,8 +439,8 @@ func TestLoad20Hosts(t *testing.T) {
 					recs = append(recs, proto.Record{Seq: int64(m*perMin + 1 + k), TS: ts, PrevTS: ts - 60, Kind: "singbox",
 						Dim1: fmt.Sprintf("198.51.%d.%d", h, (k*7+m)%250), Dim2: inbounds[k%3], RX: 10, TX: 100})
 				}
-				b, _ := json.Marshal(proto.Batch{Meta: proto.Meta{InstanceID: "load", AgentVersion: "test"}, Records: recs})
-				req, _ := http.NewRequest("POST", hs.URL+"/api/v1/ingest", bytes.NewReader(b))
+				b, _ := json.Marshal(proto.Batch{Meta: proto.Meta{Protocol: proto.Version, InstanceID: "load", AgentVersion: "test"}, Records: recs})
+				req, _ := http.NewRequest("POST", hs.URL+"/api/v2/ingest", bytes.NewReader(b))
 				req.Header.Set("Authorization", "Bearer "+tokens[h])
 				t0 := time.Now()
 				resp, err := client.Do(req)

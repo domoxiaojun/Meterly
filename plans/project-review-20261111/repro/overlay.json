@@ -1,0 +1,6 @@
+{
+  "Replace": {
+    "/Users/kkl/Documents/claude/Meterly/internal/agent/project_review_test.go": "/Users/kkl/Documents/claude/Meterly/plans/project-review-20261111/repro/agent_review_test.go.txt",
+    "/Users/kkl/Documents/claude/Meterly/internal/server/project_review_test.go": "/Users/kkl/Documents/claude/Meterly/plans/project-review-20261111/repro/server_review_test.go.txt"
+  }
+}

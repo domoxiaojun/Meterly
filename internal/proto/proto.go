@@ -1,6 +1,6 @@
 // Package proto 定义 agent -> server 的推送协议(JSON)。
 //
-//	POST /api/v1/ingest
+//	POST /api/v2/ingest
 //	Authorization: Bearer <host token>
 //	Body: Batch
 //
@@ -10,6 +10,8 @@ package proto
 
 // MaxRecordsPerBatch 单次推送最多记录数,超过 server 返回 413。
 const MaxRecordsPerBatch = 5000
+
+const Version = 2
 
 // 记录类型(kind)。新增采集项只需新 kind,不改库。
 const (
@@ -31,14 +33,15 @@ const (
 
 // Record 是一个采集样本的增量(delta),覆盖时间区间 (PrevTS, TS]。
 type Record struct {
-	Seq    int64  `json:"seq"`
-	TS     int64  `json:"ts"`      // UTC epoch 秒
-	PrevTS int64  `json:"prev_ts"` // 0 = 未知(按 TS 所在分钟归因)
-	Kind   string `json:"kind"`
-	Dim1   string `json:"dim1"`
-	Dim2   string `json:"dim2,omitempty"`
-	RX     uint64 `json:"rx"`
-	TX     uint64 `json:"tx"`
+	Seq    int64        `json:"seq"`
+	TS     int64        `json:"ts"`      // UTC epoch 秒
+	PrevTS int64        `json:"prev_ts"` // 0 = 未知(按 TS 所在分钟归因)
+	Kind   string       `json:"kind"`
+	Dim1   string       `json:"dim1"`
+	Dim2   string       `json:"dim2,omitempty"`
+	RX     uint64       `json:"rx"`
+	TX     uint64       `json:"tx"`
+	Site   *SiteMetrics `json:"site,omitempty"`
 }
 
 // CollectorHealth 采集器健康度。
@@ -53,15 +56,21 @@ type CollectorHealth struct {
 
 // Meta 主机元数据,随每次推送附带。
 type Meta struct {
-	Hostname     string                     `json:"hostname"`
-	AgentVersion string                     `json:"agent_version"`
-	InstanceID   string                     `json:"instance_id"`
-	Timezone     string                     `json:"timezone"`
-	BootID       string                     `json:"boot_id"`
-	SentAt       int64                      `json:"sent_at"`
-	Buffered     int64                      `json:"buffered"` // 本批之外仍在本地缓冲的记录数
-	Dropped      int64                      `json:"dropped"`  // 缓冲超限累计丢弃记录数
-	Collectors   map[string]CollectorHealth `json:"collectors"`
+	Hostname      string                     `json:"hostname"`
+	AgentVersion  string                     `json:"agent_version"`
+	InstanceID    string                     `json:"instance_id"`
+	Timezone      string                     `json:"timezone"`
+	BootID        string                     `json:"boot_id"`
+	SentAt        int64                      `json:"sent_at"`
+	Buffered      int64                      `json:"buffered"` // 本批之外仍在本地缓冲的记录数
+	Dropped       int64                      `json:"dropped"`  // 缓冲超限累计丢弃记录数
+	Collectors    map[string]CollectorHealth `json:"collectors"`
+	Protocol      int                        `json:"protocol"`
+	Inventory     *Inventory                 `json:"inventory,omitempty"`
+	ConfigVersion int64                      `json:"config_version"`
+	ConfigError   string                     `json:"config_error,omitempty"`
+	DroppedFrom   int64                      `json:"dropped_from,omitempty"`
+	DroppedTo     int64                      `json:"dropped_to,omitempty"`
 }
 
 type Batch struct {
@@ -74,4 +83,5 @@ type IngestResponse struct {
 	Duplicates int    `json:"duplicates"`
 	Host       string `json:"host"`
 	MaxSeq     int64  `json:"max_seq"`
+	Rejected   int    `json:"rejected"`
 }

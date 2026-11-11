@@ -4,15 +4,19 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
 // SiteSource 一条要跟踪的 access_log。
 type SiteSource struct {
-	Path      string `json:"path"`
-	Site      string `json:"site"`                 // server_name,或从路径推断
-	Format    string `json:"format,omitempty"`     // log_format 名,空则自动探测
-	FormatDef string `json:"format_def,omitempty"` // 可选:直接给出格式串
+	Path           string   `json:"path"`
+	Site           string   `json:"site"`                 // server_name,或从路径推断
+	Format         string   `json:"format,omitempty"`     // log_format 名,空则自动探测
+	FormatDef      string   `json:"format_def,omitempty"` // 可选:直接给出格式串
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
+	IPHeader       string   `json:"ip_header,omitempty"`
+	RealIPApplied  bool     `json:"real_ip_applied,omitempty"`
 }
 
 var reServer = regexp.MustCompile(`(?s)server\s*\{`)
@@ -83,53 +87,17 @@ func joinNginxStrings(s string) string {
 }
 
 type serverBlock struct {
-	Names []string
-	Logs  []accessLogRef
+	Names          []string
+	Logs           []accessLogRef
+	TrustedProxies []string
+	IPHeader       string
 }
 
 type accessLogRef struct {
 	Path, Format string
 }
 
-func parseServerBlocks(text string) []serverBlock {
-	text = stripNginxComments(text)
-	var out []serverBlock
-	for _, loc := range reServer.FindAllStringIndex(text, -1) {
-		start := loc[1]
-		depth := 1
-		i := start
-		for i < len(text) && depth > 0 {
-			switch text[i] {
-			case '{':
-				depth++
-			case '}':
-				depth--
-			}
-			i++
-		}
-		body := text[start : i-1]
-		var names []string
-		for _, m := range reServerName.FindAllStringSubmatch(body, -1) {
-			for _, n := range strings.Fields(m[1]) {
-				n = strings.TrimSpace(n)
-				if n != "" && n != "_" && n != "*" && n != "localhost" && n != "127.0.0.1" {
-					names = append(names, n)
-				}
-			}
-		}
-		var logs []accessLogRef
-		for _, m := range reAccessLog.FindAllStringSubmatch(body, -1) {
-			ref := parseAccessLogDirective(m[1])
-			if ref.Path != "" {
-				logs = append(logs, ref)
-			}
-		}
-		if len(logs) > 0 {
-			out = append(out, serverBlock{Names: names, Logs: logs})
-		}
-	}
-	return out
-}
+func parseServerBlocks(text string) []serverBlock { return serverBlocks(nginxNodes(text), nil, "") }
 
 func parseAccessLogDirective(s string) accessLogRef {
 	fs := strings.Fields(strings.TrimSpace(s))
@@ -190,6 +158,7 @@ func isSkippableLog(p string) bool {
 func WalkNginxConfs(roots []string, readFile func(string) ([]byte, error), walk func(root string, fn func(path string, isDir bool) error) error) (confs []string, formats map[string]string, sources []SiteSource) {
 	formats = map[string]string{}
 	seen := map[string]SiteSource{}
+	texts := map[string]string{}
 	skipFrag := []string{"/resource/apps/remote/", "/backup/", "/node_modules/", "/.git/", "/cache/"}
 	for _, root := range roots {
 		_ = walk(root, func(path string, isDir bool) error {
@@ -219,41 +188,87 @@ func WalkNginxConfs(roots []string, readFile func(string) ([]byte, error), walk 
 				return nil
 			}
 			text := string(b)
+			texts[path] = text
 			for k, v := range ParseLogFormats(text) {
 				formats[k] = v
 			}
-			for _, bl := range parseServerBlocks(text) {
-				site := ""
-				if len(bl.Names) > 0 {
-					site = bl.Names[0]
-				}
-				for _, lg := range bl.Logs {
-					srcSite := site
-					inferred := srcSite == ""
-					if srcSite == "" {
-						srcSite = inferSiteFromPath(lg.Path)
-					}
-					if srcSite == "" {
-						srcSite = "_default"
-					}
-					for _, cand := range MapContainerLogPath(lg.Path) {
-						if _, ok := seen[cand]; ok && !inferred {
-							s := seen[cand]
-							if s.Site == "_default" || s.Site == "" {
-								s.Site, s.Format = srcSite, lg.Format
-								seen[cand] = s
-							}
-							continue
-						}
-						if _, ok := seen[cand]; ok {
-							continue
-						}
-						seen[cand] = SiteSource{Path: cand, Site: srcSite, Format: lg.Format}
-					}
-				}
-			}
+
 			return nil
 		})
+	}
+
+	// Expand only discovered configuration files. No shell, nginx reload or arbitrary file reads.
+	used := map[string]bool{}
+	var expand func([]nginxNode, string, map[string]bool, int) []nginxNode
+	expand = func(nodes []nginxNode, base string, stack map[string]bool, depth int) []nginxNode {
+		if depth > 16 {
+			return nil
+		}
+		out := []nginxNode{}
+		for _, n := range nodes {
+			if n.name == "include" && len(n.args) == 1 {
+				pattern := n.args[0]
+				if !filepath.IsAbs(pattern) {
+					pattern = filepath.Join(base, pattern)
+				}
+				for _, file := range confs {
+					match, _ := filepath.Match(pattern, file)
+					if !match || stack[file] {
+						continue
+					}
+					used[file] = true
+					stack[file] = true
+					out = append(out, expand(nginxNodes(texts[file]), base, stack, depth+1)...)
+					delete(stack, file)
+				}
+				continue
+			}
+			if len(n.children) > 0 {
+				n.children = expand(n.children, base, stack, depth+1)
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	sort.SliceStable(confs, func(i, j int) bool {
+		return filepath.Base(confs[i]) == "nginx.conf" && filepath.Base(confs[j]) != "nginx.conf"
+	})
+	for _, path := range confs {
+		if used[path] {
+			continue
+		}
+		text := texts[path]
+		for _, bl := range serverBlocks(expand(nginxNodes(text), filepath.Dir(path), map[string]bool{path: true}, 0), nil, "") {
+			site := ""
+			if len(bl.Names) > 0 {
+				site = bl.Names[0]
+			}
+			for _, lg := range bl.Logs {
+				srcSite := site
+				inferred := srcSite == ""
+				if srcSite == "" {
+					srcSite = inferSiteFromPath(lg.Path)
+				}
+				if srcSite == "" {
+					srcSite = "_default"
+				}
+				for _, cand := range MapContainerLogPath(lg.Path) {
+					if _, ok := seen[cand]; ok && !inferred {
+						s := seen[cand]
+						if s.Site == "_default" || s.Site == "" {
+							s.Site, s.Format = srcSite, lg.Format
+							seen[cand] = s
+						}
+						continue
+					}
+					if _, ok := seen[cand]; ok {
+						continue
+					}
+					seen[cand] = SiteSource{Path: cand, Site: srcSite, Format: lg.Format,
+						TrustedProxies: bl.TrustedProxies, IPHeader: bl.IPHeader, RealIPApplied: len(bl.TrustedProxies) > 0 && bl.IPHeader != ""}
+				}
+			}
+		}
 	}
 	for _, s := range seen {
 		sources = append(sources, s)

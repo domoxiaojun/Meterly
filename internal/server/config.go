@@ -17,17 +17,19 @@ import (
 
 // Config 中心配置(JSON)。面板口令来源:panel_token_file > 环境变量 METERLY_PANEL_TOKEN(回退 TRAFFICSTAT_PANEL_TOKEN)。
 type Config struct {
-	Listen         string          `json:"listen"`  // 默认 127.0.0.1:8787
-	DBPath         string          `json:"db_path"` // 默认 /var/lib/meterly-server/meterly.db(若不存在则回退 trafficstat.db)
-	PanelTokenFile string          `json:"panel_token_file,omitempty"`
-	TZ             string          `json:"tz"`                        // 面板展示时区,默认 Asia/Singapore
-	ResetDay       int             `json:"reset_day"`                 // 多机汇总视图默认周期重置日,默认 9
-	TrustedProxies []string        `json:"trusted_proxies,omitempty"` // 反代地址或 CIDR(取 X-Forwarded-For)
-	TLSCert        string          `json:"tls_cert,omitempty"`
-	TLSKey         string          `json:"tls_key,omitempty"`
-	OfflineAfter   int             `json:"offline_after_minutes"` // 判定离线,默认 5
-	Retention      store.Retention `json:"retention"`
-	Geo            GeoConfig       `json:"geo"`
+	Listen         string            `json:"listen"`  // 默认 127.0.0.1:8787
+	DBPath         string            `json:"db_path"` // 默认 /var/lib/meterly-server/meterly.db(若不存在则回退 trafficstat.db)
+	PanelTokenFile string            `json:"panel_token_file,omitempty"`
+	TZ             string            `json:"tz"`                        // 面板展示时区,默认 Asia/Singapore
+	ResetDay       int               `json:"reset_day"`                 // 多机汇总视图默认周期重置日,默认 9
+	TrustedProxies []string          `json:"trusted_proxies,omitempty"` // 反代地址或 CIDR(取 X-Forwarded-For)
+	TLSCert        string            `json:"tls_cert,omitempty"`
+	TLSKey         string            `json:"tls_key,omitempty"`
+	OfflineAfter   int               `json:"offline_after_minutes"` // 判定离线,默认 5
+	Retention      store.Retention   `json:"retention"`
+	Geo            GeoConfig         `json:"geo"`
+	Maintenance    MaintenanceConfig `json:"maintenance"`
+	AgentURL       string            `json:"agent_url,omitempty"`
 
 	panelToken string
 	loc        *time.Location
@@ -89,6 +91,15 @@ func (c *Config) finish() error {
 		c.OfflineAfter = 5
 	}
 	c.Retention.Defaults()
+	if c.Retention.HourDays < 1 || c.Retention.MinuteDetailHours < 1 {
+		return errors.New("保留期必须大于零")
+	}
+	if c.Maintenance.BackupDir == "" {
+		c.Maintenance.BackupDir = filepath.Join(filepath.Dir(c.DBPath), "backups")
+	}
+	if c.Maintenance.Keep <= 0 {
+		c.Maintenance.Keep = 7
+	}
 	if c.Geo.Dir == "" {
 		c.Geo.Dir = filepath.Join(filepath.Dir(c.DBPath), "geo")
 	}

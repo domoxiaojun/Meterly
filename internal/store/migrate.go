@@ -2,45 +2,43 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 )
 
-// CurrentSchema 当前库版本。M1/M2 库没有这个键,打开时会升到 3。
-const CurrentSchema = 3
+const CurrentSchema = 4
 
-// migrate 在已有库上安全补齐新表/索引,并记录 schema_version。可重复执行。
-func migrate(w *sql.DB) error {
-	// Schema 常量里已有 CREATE IF NOT EXISTS;这里再跑一遍以防旧二进制写成的库缺表。
-	if _, err := w.Exec(Schema); err != nil {
+// Check before any DDL: old databases are never changed or silently migrated.
+func checkSchema(w *sql.DB) error {
+	var n int
+	if err := w.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).Scan(&n); err != nil {
 		return err
 	}
-	var ver int
-	var s string
-	err := w.QueryRow(`SELECT v FROM settings WHERE k='schema_version'`).Scan(&s)
-	if err == sql.ErrNoRows {
-		ver = 0
-	} else if err != nil {
-		return err
-	} else {
-		ver, _ = strconv.Atoi(s)
+	if n == 0 {
+		return nil
 	}
-	if ver < CurrentSchema {
-		if _, err := w.Exec(`INSERT INTO settings(k,v) VALUES('schema_version',?)
-			ON CONFLICT(k) DO UPDATE SET v=excluded.v`, strconv.Itoa(CurrentSchema)); err != nil {
-			return fmt.Errorf("写入 schema_version: %w", err)
-		}
+	var v string
+	if err := w.QueryRow(`SELECT v FROM settings WHERE k='schema_version'`).Scan(&v); err != nil || v != strconv.Itoa(CurrentSchema) {
+		return errors.New("数据库格式不兼容：请先归档旧库，配置一个新的 db_path，并成套升级中心与 agent；不会自动迁移或删除旧数据")
 	}
 	return nil
 }
-
-// SchemaVersion 返回库中记录的版本号(测试用)。
+func migrate(w *sql.DB) error {
+	if _, err := w.Exec(Schema + AnalyticsSchema + ControlSchema); err != nil {
+		return err
+	}
+	_, err := w.Exec(`INSERT INTO settings(k,v) VALUES('schema_version',?) ON CONFLICT(k) DO NOTHING`, strconv.Itoa(CurrentSchema))
+	if err != nil {
+		return fmt.Errorf("写入 schema_version: %w", err)
+	}
+	return nil
+}
 func (s *Store) SchemaVersion() (int, error) {
 	var v string
 	err := s.R.QueryRow(`SELECT v FROM settings WHERE k='schema_version'`).Scan(&v)
 	if err != nil {
 		return 0, err
 	}
-	n, err := strconv.Atoi(v)
-	return n, err
+	return strconv.Atoi(v)
 }

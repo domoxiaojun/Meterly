@@ -204,7 +204,7 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 	}
 }
 
-func TestSiteTopNOther(t *testing.T) {
+func TestSiteRetainsAllIPs(t *testing.T) {
 	dir := t.TempDir()
 	logp := filepath.Join(dir, "a.log")
 	var b strings.Builder
@@ -233,7 +233,7 @@ func TestSiteTopNOther(t *testing.T) {
 			nIP++
 		}
 	}
-	if nIP != 2 || kept != 500+400 || other != 300+200+100 {
+	if nIP != 5 || kept != 1500 || other != 0 {
 		t.Fatalf("kept=%d n=%d other=%d recs=%+v", kept, nIP, other, recs)
 	}
 }

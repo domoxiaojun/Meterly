@@ -23,8 +23,18 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Build
         run: go build ./...
-      - name: Agent install dry-run and migrate test
+      - name: Agent standalone and repeated install
         run: |
           scripts/build.sh
           scripts/install-agent.sh --center http://127.0.0.1:8787 --allow-http --dry-run --binary ./build/meterly-agent
           scripts/install-agent_test.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Browser and module tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm test
+          npm run test:browser

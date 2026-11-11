@@ -11,12 +11,12 @@ const (
 	AgentConfigOld = "/etc/trafficstat/agent.json"
 	AgentTokenNew  = "/etc/meterly/agent.token"
 	AgentTokenOld  = "/etc/trafficstat/agent.token"
-	AgentStateNew  = "/var/lib/meterly"
+	AgentStateNew  = "/var/lib/meterly-v2"
 	AgentStateOld  = "/var/lib/trafficstat"
 
 	ServerConfigNew = "/etc/meterly/server.json"
 	ServerConfigOld = "/etc/trafficstat/server.json"
-	ServerDBNew     = "/var/lib/meterly-server/meterly.db"
+	ServerDBNew     = "/var/lib/meterly-server/meterly-v2.db"
 	ServerDBLegacy  = "/var/lib/meterly-server/trafficstat.db"
 	ServerDBOld     = "/var/lib/trafficstat-server/trafficstat.db"
 )
@@ -46,25 +46,25 @@ func FirstExisting(fallback string, paths ...string) string {
 
 // AgentConfigPath 缺省配置路径:新路径优先,否则回退旧版 trafficstat。
 func AgentConfigPath() string {
-	return FirstExisting(AgentConfigNew, AgentConfigNew, AgentConfigOld)
+	return AgentConfigNew
 }
 
 // AgentTokenPath 缺省 token 路径。
 func AgentTokenPath() string {
-	return FirstExisting(AgentTokenNew, AgentTokenNew, AgentTokenOld)
+	return AgentTokenNew
 }
 
 // AgentStateDir 缺省状态目录。
 func AgentStateDir() string {
-	return FirstExisting(AgentStateNew, AgentStateNew, AgentStateOld)
+	return AgentStateNew
 }
 
 // ServerConfigPath 缺省中心配置路径。都不存在时返回空,调用方使用内置默认值。
 func ServerConfigPath() string {
-	return FirstExisting("", ServerConfigNew, ServerConfigOld)
+	return FirstExisting("", ServerConfigNew)
 }
 
 // ServerDBPath 缺省数据库路径。文件名 trafficstat.db 在旧部署中保留,见 docs/migrate.md。
 func ServerDBPath() string {
-	return FirstExisting(ServerDBNew, ServerDBNew, ServerDBLegacy, ServerDBOld)
+	return ServerDBNew
 }

@@ -166,7 +166,7 @@ func TestMinuteDetailRetention(t *testing.T) {
 	var sb, ifc int
 	s.R.QueryRow(`SELECT COUNT(*) FROM fact_minute WHERE kind='singbox'`).Scan(&sb)
 	s.R.QueryRow(`SELECT COUNT(*) FROM fact_minute WHERE kind='iface'`).Scan(&ifc)
-	if sb != 1 || ifc != 1 {
-		t.Fatalf("sing-box 分钟明细应只留 25h 内,网卡保留: sb=%d iface=%d", sb, ifc)
+	if sb != 2 || ifc != 1 {
+		t.Fatalf("48 小时内的分钟明细应完整保留: sb=%d iface=%d", sb, ifc)
 	}
 }

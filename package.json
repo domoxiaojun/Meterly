@@ -1,0 +1,7 @@
+{
+  "name": "meterly-ui-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/*.test.js", "test:browser": "playwright test" },
+  "devDependencies": { "@playwright/test": "1.65.0" }
+}

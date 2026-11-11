@@ -1,0 +1,16 @@
+[Unit]
+Description=Meterly verified release updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/meterly-agent apply-upgrade -config /etc/meterly/agent.json -target /usr/local/bin/meterly-agent
+TimeoutStartSec=300
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/usr/local/bin /var/lib/meterly-v2
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

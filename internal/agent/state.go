@@ -24,10 +24,13 @@ type IfaceState struct {
 // 崩溃一致性:先写入"新基线 + 本批待写记录(Pending)",再追加到缓冲;
 // 启动时把 Pending 中 seq 大于缓冲最大 seq 的记录补写进缓冲,保证不丢不重。
 type State struct {
+	Protocol    int                   `json:"protocol"`
 	InstanceID  string                `json:"instance_id"`
 	NextSeq     int64                 `json:"next_seq"`
 	LastTick    int64                 `json:"last_tick"`
 	Dropped     int64                 `json:"dropped"` // 缓冲超限累计丢弃条数
+	DroppedFrom int64                 `json:"dropped_from,omitempty"`
+	DroppedTo   int64                 `json:"dropped_to,omitempty"`
 	Ifaces      map[string]IfaceState `json:"ifaces"`
 	Singbox     SBState               `json:"singbox"`
 	SiteOffsets map[string]LogOffset  `json:"site_offsets,omitempty"`
@@ -45,7 +48,7 @@ func LoadState(dir string) (*State, error) {
 		if _, err := rand.Read(id); err != nil {
 			return nil, err
 		}
-		return &State{InstanceID: hex.EncodeToString(id), NextSeq: 1, Ifaces: map[string]IfaceState{},
+		return &State{Protocol: proto.Version, InstanceID: hex.EncodeToString(id), NextSeq: 1, Ifaces: map[string]IfaceState{},
 			SiteOffsets: map[string]LogOffset{}, Netbird: map[string]PeerState{}, Xray: map[string]uint64{}}, nil
 	}
 	if err != nil {
@@ -54,6 +57,9 @@ func LoadState(dir string) (*State, error) {
 	s := &State{}
 	if err := json.Unmarshal(b, s); err != nil {
 		return nil, errors.New("state.json 损坏;如需重置请删除后重启(会生成新实例 ID)")
+	}
+	if s.Protocol != proto.Version {
+		return nil, errors.New("agent 状态格式不兼容：请归档旧 state_dir，并使用新的状态目录")
 	}
 	if s.Ifaces == nil {
 		s.Ifaces = map[string]IfaceState{}
@@ -74,6 +80,7 @@ func LoadState(dir string) (*State, error) {
 }
 
 func (s *State) Save(dir string) error {
+	s.Protocol = proto.Version
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err

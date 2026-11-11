@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/domoxiaojun/Meterly/internal/compat"
+	"github.com/domoxiaojun/Meterly/internal/proto"
 )
 
 // Config agent 配置(JSON,文件权限必须为 600/400)。
@@ -28,7 +29,10 @@ type Config struct {
 	BatchSize      int      `json:"batch_size"`
 	HTTPTimeout    Duration `json:"http_timeout"`
 
-	Collectors CollectorsConfig `json:"collectors"`
+	Collectors      CollectorsConfig `json:"collectors"`
+	Discovery       *bool            `json:"discovery,omitempty"`
+	Overrides       proto.Policy     `json:"overrides,omitempty"`
+	localCollectors map[string]json.RawMessage
 }
 
 type CollectorsConfig struct {
@@ -91,6 +95,27 @@ func LoadConfig(path string) (*Config, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(c); err != nil {
 		return nil, fmt.Errorf("解析配置失败: %w", err)
+	}
+	var explicit struct {
+		Collectors map[string]struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"collectors"`
+	}
+	_ = json.Unmarshal(b, &explicit)
+	var raw struct {
+		Collectors map[string]json.RawMessage `json:"collectors"`
+	}
+	_ = json.Unmarshal(b, &raw)
+	c.localCollectors = raw.Collectors
+	if c.Overrides.Collectors == nil {
+		c.Overrides.Collectors = map[string]bool{}
+	}
+	for k, v := range explicit.Collectors {
+		if v.Enabled != nil {
+			if _, set := c.Overrides.Collectors[k]; !set {
+				c.Overrides.Collectors[k] = *v.Enabled
+			}
+		}
 	}
 	if err := c.resolveToken(); err != nil {
 		return nil, err
@@ -168,6 +193,9 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) validate() error {
+	if err := c.Overrides.Validate(); err != nil {
+		return err
+	}
 	u, err := url.Parse(c.ServerURL)
 	if c.ServerURL == "" || err != nil || u.Host == "" {
 		return errors.New("server_url 未配置或无效")
@@ -192,6 +220,19 @@ func (c *Config) validate() error {
 	}
 	if p := c.Collectors.Singbox.PollInterval.Duration; p < time.Second || p > c.Interval.Duration {
 		return errors.New("singbox.poll_interval 需在 1s 与 interval 之间")
+	}
+	for _, src := range c.Collectors.Site.Sources {
+		if src.Path == "" {
+			return errors.New("网站日志路径不能为空")
+		}
+		if src.FormatDef != "" {
+			if _, e := CompileLogFormat(src.Format, src.FormatDef); e != nil {
+				return e
+			}
+		}
+	}
+	if c.BatchSize < 1 {
+		return errors.New("batch_size 必须大于零")
 	}
 	if c.BatchSize > 5000 {
 		c.BatchSize = 5000

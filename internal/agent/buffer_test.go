@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -68,27 +69,34 @@ func TestBufferRepairsTornTail(t *testing.T) {
 	}
 }
 
-func TestBufferLimitDropsOldest(t *testing.T) {
-	dir := t.TempDir()
-	b, _ := OpenBuffer(dir, 1<<20) // 段 128KiB
-	var dropped int64
+func TestBufferLimitPausesWithoutEviction(t *testing.T) {
+	b, e := OpenBuffer(t.TempDir(), 1<<20)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer b.Close()
 	seq := int64(1)
-	for i := 0; i < 200; i++ {
-		d, err := b.Append(recs(seq, 100))
-		if err != nil {
-			t.Fatal(err)
+	for {
+		_, e = b.Append(recs(seq, 100))
+		if errors.Is(e, ErrBufferFull) {
+			break
 		}
-		dropped += d
+		if e != nil {
+			t.Fatal(e)
+		}
 		seq += 100
 	}
-	if b.Size() > 1<<20+b.segBytes {
-		t.Fatalf("超出上限: %d", b.Size())
+	if b.Size() > 1<<20 || b.Count() != seq-1 {
+		t.Fatal("capacity or count changed", b.Size(), b.Count())
 	}
-	if dropped == 0 || b.Count()+dropped != 20000 {
-		t.Fatalf("丢弃计数不守恒: count=%d dropped=%d", b.Count(), dropped)
+	pending, e := b.Pending(1)
+	if e != nil || pending[0].Seq != 1 {
+		t.Fatal("oldest unacknowledged record lost")
 	}
-	p, _ := b.Pending(1)
-	if p[0].Seq != dropped+1 {
-		t.Fatalf("应从最旧未丢弃记录开始: %d vs %d", p[0].Seq, dropped+1)
+	if e = b.Ack(seq - 1); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = b.Append(recs(seq, 100)); e != nil {
+		t.Fatal("upload did not release capacity", e)
 	}
 }

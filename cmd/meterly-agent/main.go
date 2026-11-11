@@ -107,7 +107,7 @@ func main() {
 			os.Exit(1)
 		}
 		cfg := agent.ProposalConfig(d, *center, *tokenFile, *caFile, *stateDir, *allowHTTP)
-		if err := agent.WriteConfigFile(*cfgPath, cfg); err != nil {
+		if err := agent.WriteManagedConfig(*cfgPath, cfg, splitCSV(*only), splitCSV(*skip)); err != nil {
 			log.Error("写配置失败", "err", err.Error())
 			os.Exit(1)
 		}
@@ -133,6 +133,16 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "已注册主机 %s,token 已写入 %s(0600)\n", resp.Host, *outPath)
+	case "validate":
+		cfg, err := agent.LoadConfig(*cfgPath)
+		if err == nil {
+			_, err = agent.LoadState(cfg.StateDir)
+		}
+		if err != nil {
+			log.Error("配置验证失败", "err", err)
+			os.Exit(1)
+		}
+		fmt.Println("配置和状态协议有效")
 	case "run", "check":
 		cfg, err := agent.LoadConfig(*cfgPath)
 		if err != nil {
@@ -169,6 +179,20 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("升级完成:", t, "\n请执行: systemctl restart meterly-agent")
+	case "apply-upgrade":
+		if cfg, err := agent.LoadConfig(*cfgPath); err == nil {
+			*stateDir = cfg.StateDir
+		} else {
+			log.Error("读取更新器配置失败", "err", err)
+			os.Exit(1)
+		}
+		if *target == "" {
+			*target = "/usr/local/bin/meterly-agent"
+		}
+		if err := (agent.Updater{}).Apply(context.Background(), *stateDir, *target); err != nil {
+			log.Error("升级任务结束", "err", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)

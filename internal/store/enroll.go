@@ -146,7 +146,7 @@ func (s *Store) RedeemEnroll(ctx context.Context, code, hostName string, now tim
 	err = tx.QueryRowContext(ctx, `SELECT `+hostCols+` FROM hosts WHERE name=?`, rec.HostName).
 		Scan(&existing.ID, &existing.Name, &existing.CreatedAt, &existing.RevokedAt, &existing.TZ, &existing.ResetDay,
 			&existing.BillingMode, &existing.BillingIface, &existing.QuotaBytes, &existing.Note, &existing.LastSeen,
-			&existing.LastIP, &existing.AgentVersion, &existing.MetaJSON)
+			&existing.LastIP, &existing.AgentVersion, &existing.MetaJSON, &existing.SettingsVersion)
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", nil, err

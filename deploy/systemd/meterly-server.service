@@ -1,9 +1,9 @@
 # /etc/systemd/system/meterly-server.service —— 中心 systemd 单二进制方式(与 docker compose 二选一)
-# 安装步骤见 README「中心部署 · 方式二」。数据在 /var/lib/meterly-server(StateDirectory),
+# 安装步骤见 README的 systemd 部署说明。数据在 /var/lib/meterly-server(StateDirectory),
 # 归属地库在其下 geo/,在线备份在 backups/。配置与面板口令在 /etc/meterly(只读)。
 [Unit]
 Description=Meterly server(流量统计中心)
-Documentation=https://github.com/domoxiaojun/MeterlyREADME.md
+Documentation=https://github.com/domoxiaojun/Meterly
 After=network-online.target
 Wants=network-online.target
 

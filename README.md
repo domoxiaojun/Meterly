@@ -1,153 +1,98 @@
-# Meterly
+# Meterly v2
 
-自建的分布式流量统计:在每台机器上跑一个只出站的 agent,把网卡、sing-box、站点日志、NetBird、xray 的流量按分钟汇总到中心,用中文面板查看。不依赖 Prometheus / Grafana。
+用一个 Go 中心和轻量 agent，查看 **哪一天、哪个网站、哪个客户端 IP 使用了多少源站流量**。适用于 1–20 台主机、100 个以内网站。中心使用 SQLite 文件；面板、ES Modules 和 Chart.js 内嵌在二进制中，部署不需要 Node 或数据库服务。
 
-Meterly is a self-hosted traffic accounting system: a small outbound-only agent on each host, a single-binary center with SQLite and a Chinese web panel. See the rest of this file for setup; the documentation is in Chinese.
+v2 是不兼容升级：仅支持 `/api/v2` 和协议版本 2；中心拒绝打开旧结构数据库，agent 拒绝读取旧状态。旧库归档、新版本启用和生产部署须另行操作，参见 [旧版切换说明](docs/migrate.md)。
 
-## 功能
+## 面板
 
-- 按主机、时间、入站、来源 IP、站点、NetBird 对等端查看流量
-- 网卡总量与 sing-box / 站点 / NetBird 的对账拆解(口径不同,不能并列相加)
-- IP 归属地与 ASN(离线 [DB-IP Lite](https://db-ip.com/),见下方版权说明)
-- 计费周期、配额、与服务商数字比对(可导入 vnstat)
-- 一条命令安装 agent:自动探测本机有什么采集器,用短时效注册码向中心领 token
-- 中心可用 Docker Compose,或 systemd 单二进制;agent 只用 systemd
+- **总览**：源站收发流量、请求数、客户端 IP 数、活跃网站、主要网站/IP、上一等长时段变化和采集告警。
+- **网站**：选择日期、主机，搜索网站，按流量、请求或错误率排序；详情含趋势、具体状态码和完整 IP 分页排行。
+- **IP**：网站日志与 sing-box 载荷分开查询；支持 IP/CIDR、国家和 ASN，反查关联网站或入站，导出全部匹配结果。
+- **主机**：实际网卡、计费配置、采集器、发现/停用/失联的网站来源、配置版本、积压和升级。
+- **对账**：按主机自身计费时区及重置日计算配额、预测、服务商读数和 vnstat 差异。
+- **系统**：生成安装指引、检查正式版本、查看升级/维护记录、备份、磁盘容量和站内告警。
 
-## 架构
+核心操作：**指定一天 → 网站 → IP 排行 → IP 详情 → 浏览器返回**。日期和筛选保存在 URL，返回保留查询与滚动位置。历史查询不定时刷新；当前范围自动刷新，并取消已过时的请求。支持深色、浅色、跟随系统和移动端。
 
-```
-主机 A, B, …                    中心
-┌─ meterly-agent ─┐            ┌─ meterly-server ─┐
-│ 网卡 /proc      │  HTTPS     │ ingest + SQLite  │
-│ sing-box API    │ ──每分钟──▶│ 中文面板 :8787   │
-│ nginx/1Panel 日志│  只出站    │ 可选 Caddy TLS   │
-│ NetBird / xray  │            └──────────────────┘
-└─────────────────┘
-```
+## 统计口径
 
-agent 是静态 Go 二进制,默认不监听任何端口。中心把事实数据写进统一表 (`host, minute, kind, dim, rx, tx`),并汇总到小时/天。库文件在 compose 下默认仍叫 `/data/trafficstat.db`(兼容旧部署,不要随意改名)。
+| 来源 | 字节含义 | 注意事项 |
+|---|---|---|
+| 源站日志 | nginx/OpenResty 记录的请求长度、响应字节 | 没有 `$request_length` 时上行不可用；不包含未回源的 CDN 缓存请求 |
+| sing-box | 连接上传/下载载荷 | 轮询间隙无法识别的增量明确列为未归因 |
+| 实际网卡 | 操作系统 RX/TX | 计费按指定网卡和单/双向口径计算 |
+| NetBird / xray | 对等端、入站或用户计数 | xray 不提供来源 IP |
 
-## 快速开始
+这些口径互有重叠，**不能相加作为总流量**。网站以规范化域名汇总，同域名跨主机仍可筛选；无法识别域名的日志按主机和来源独立展示。客户端 IP 数不是访客人数。访问日志按请求结束时刻归因，长连接可能在结束时形成峰值。
 
-需要 Go 1.27+ 才能从源码构建。也直接用 GitHub Release 里的二进制,或 GHCR 镜像。
+UTC 存储，网站/IP 分析日期统一按中心时区（默认 `Asia/Singapore`）解释。分钟明细默认 48 小时，完整 IP 小时明细 365 天，主机和网站日汇总长期保留；排行榜分页不影响原始明细。超出精度或保留期会显示说明，未采集不显示为精确零。旧日志不回填。
 
-```bash
-git clone https://github.com/domoxiaojun/Meterly.git
-cd Meterly
-scripts/build.sh          # 本机构建到 build/
-scripts/build.sh dist     # linux amd64/arm64 静态包 + SHA256SUMS
-```
+## 构建与验证
 
-### 中心 · 方式一:Docker Compose(推荐)
-
-镜像:`ghcr.io/domoxiaojun/meterly-server`。也可以在本目录 `docker compose build`。加固项(非 root、只读根、drop cap、口令走文件)保持不变,细节见 [`deploy/compose/README.md`](deploy/compose/README.md)。
-
-```bash
-cd deploy/compose
-cp .env.example .env          # METERLY_VERSION 默认 latest,可改成 v0.3.0
-mkdir -p secrets
-( umask 077; openssl rand -base64 32 > secrets/panel_token )
-sudo chown 65532:65532 secrets/panel_token
-docker compose pull           # 或 docker compose build
-docker compose up -d
-# 需要 TLS 反代时:
-docker compose --profile caddy up -d
-```
-
-默认只把面板发布到宿主 `127.0.0.1:8787`。给 agent 推送时,把 `.env` 里的 `METERLY_BIND` 改成内网或 NetBird 地址,不要用 `0.0.0.0`。若要让固定公网 IP 用 HTTPS 打开面板,见 `deploy/compose/README.md`「指定 IP 访问面板」(独立端口 + 防火墙白名单)。拉 GHCR 私有包需要先 `docker login ghcr.io`。
-
-```bash
-# 登记一台主机,token 只在 stdout 出现这一次
-( umask 077; docker compose exec -T server /meterly-server host add host-a -billing both -quota 2TiB > host-a.token )
-# 或生成短时效注册码,让 agent 自己领 token
-docker compose exec -T server /meterly-server enroll create -host host-a
-```
-
-### 中心 · 方式二:systemd 单二进制
-
-```bash
-install -m 755 dist/meterly-server-linux-amd64 /usr/local/bin/meterly-server
-useradd -r -s /usr/sbin/nologin meterly
-install -d -m 750 -g meterly /etc/meterly
-install -m 640 -g meterly deploy/config/server.example.json /etc/meterly/server.json
-( umask 077; openssl rand -base64 32 > /etc/meterly/panel.token )
-chown meterly:meterly /etc/meterly/panel.token
-cp deploy/systemd/meterly-server.service /etc/systemd/system/
-cp deploy/systemd/meterly-backup.{service,timer} /etc/systemd/system/   # 可选,每日在线备份
-systemctl daemon-reload && systemctl enable --now meterly-server meterly-backup.timer
-meterly-server healthcheck -config /etc/meterly/server.json
-```
-
-默认只监听 `127.0.0.1:8787`。数据在 `/var/lib/meterly-server`(含 `geo/`、`backups/`)。新安装默认库文件是 `meterly.db`;从旧版迁过来时,二进制会回退已有的 `trafficstat.db`。
-
-### 一条命令装 agent
-
-```bash
-# 中心上先出注册码(限次、短时效;不要把码写进命令行)
-meterly-server enroll create -host host-a -config /etc/meterly/server.json
-# 把码写进 600 文件后,在新机器上:
-curl -fsSL -o install-agent.sh https://raw.githubusercontent.com/domoxiaojun/Meterly/main/scripts/install-agent.sh
-chmod +x install-agent.sh
-sudo ./install-agent.sh --center https://meterly.internal:8443 \
-  --enroll-code-file ./enroll.code --ca-file ./ca.crt
-```
-
-未指定 `--binary` 时,脚本会从 GitHub Release 下载对应架构的 `meterly-agent`,并用 `SHA256SUMS` 校验。可用 `--version v0.3.0` 钉死版本。`--dry-run` 只打印将启用的采集器,不改任何文件。
-
-已有 token 的机器(升级、不换发):
-
-```bash
-sudo ./install-agent.sh --center URL --token-file /etc/meterly/agent.token --ca-file /etc/meterly/ca.crt
-```
-
-若这台机器以前跑的是 `trafficstat-agent`,脚本会停止旧 unit、把配置和 token 迁到 `/etc/meterly` 与 `/var/lib/meterly`、启用新 unit。详见 [`docs/migrate.md`](docs/migrate.md)。
-
-## 配置要点
-
-- token 来源:配置里的 `token_file` > 环境变量 `METERLY_TOKEN`(回退 `TRAFFICSTAT_TOKEN`) > `token` 字段。文件权限必须是 600。
-- 中心配置路径:命令行 `-config` > `METERLY_CONFIG`(回退 `TRAFFICSTAT_CONFIG`) > `/etc/meterly/server.json`(若不存在则回退 `/etc/trafficstat/server.json`)。
-- 面板口令:`panel_token_file` > `METERLY_PANEL_TOKEN`(回退 `TRAFFICSTAT_PANEL_TOKEN`)。监听非回环地址时必须配置,至少 12 个字符。
-- 采集器在 `agent.json` 里分别 `enabled`。安装脚本会探测 sing-box、xray、nginx、1Panel openresty、NetBird 和网卡,默认只开启探测到的项。
-- xray 只能按入站/用户统计,没有来源 IP;站点日志按请求结束时归因(长连接会记在结束的那一小时)。
-
-常用运维命令(compose 下加上 `docker compose exec -T server`):
-
-```bash
-meterly-server backup -out /var/lib/meterly-server/backups/ts-$(date +%F).db
-meterly-server geo update
-meterly-server check vnstat -host host-a -file vnstat.json
-meterly-server healthcheck
-meterly-server host list
-```
-
-## 安全
-
-- agent 只出站,不监听端口;systemd 带 Nice、内存上限和 ProtectSystem 等加固。
-- 中心 compose:uid 65532、只读根、`cap_drop: ALL`、口令只放 `secrets/panel_token`(600)。
-- 默认端口只绑在 `127.0.0.1`。Caddy 可选,面板走来源 IP 白名单,ingest 用 host token,两者分开。
-- 日志和探测输出不含 token / clash secret。
-- 不要把 token、口令、`.env`、`secrets/` 提交进仓库。
-
-## 从旧版 trafficstat 升级
-
-已经部署过旧名字的,先备份中心数据库,再按 [`docs/migrate.md`](docs/migrate.md) 先升级中心、后升级 agent。不要改 `db_path`。
-
-## 开发
-
-```bash
-go test -race ./...
-scripts/check-deploy.sh      # compose / unit 静态检查,不需要 Docker daemon
+```sh
+scripts/build.sh                 # 本机二进制
+scripts/build.sh dist            # Linux amd64/arm64 二进制、完整版本包和 SHA256SUMS
+go vet ./...
+go test -race -count=1 ./...
+npm ci                          # 仅开发/测试面板时需要
+npx playwright install chromium
+npm test
+npm run test:browser
 scripts/install-agent_test.sh
+scripts/check-deploy.sh
 ```
 
-面板截图(演示数据):
+完整包名为 `meterly-linux-amd64.tar.gz` / `meterly-linux-arm64.tar.gz`，包含中心、agent、systemd units、配置模板和安装器。原有二进制资产继续提供给独立更新器。测试使用临时 SQLite 文件、回环 HTTP/TLS 和模拟 systemctl，无需数据库服务或 Docker。
 
-- [机器与采集器](docs/panel-collectors.png)
-- [对账拆解](docs/panel-recon.png)
-- [xray](docs/panel-xray.png)
+## 中心 systemd 部署
 
-## License
+以下命令供**新中心部署**参考。先下载选定正式版本对应平台的完整包，与该版本 `SHA256SUMS` 校验后解压。
 
-源代码为 [MIT](LICENSE)。
+```sh
+sudo useradd --system --home /var/lib/meterly-server --shell /usr/sbin/nologin meterly
+sudo install -d -m 750 -g meterly /etc/meterly
+sudo install -m 755 meterly-server /usr/local/bin/meterly-server
+sudo install -m 640 -g meterly deploy/config/server.example.json /etc/meterly/server.json
+sudo sh -c 'umask 077; openssl rand -base64 32 > /etc/meterly/panel.token'
+sudo chown meterly:meterly /etc/meterly/panel.token
+sudo install -m 644 deploy/systemd/meterly-server.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now meterly-server.service
+```
 
-IP 归属地数据来自 [DB-IP Lite](https://db-ip.com/)(City / ASN),许可为 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。面板页脚和本段为署名;请勿去掉。运行时库下载到数据目录的 `geo/`,不包含在本仓库中。
+已有 `meterly` 用户无需再创建。默认监听 `127.0.0.1:8787`，新库为 `/var/lib/meterly-server/meterly-v2.db`。对外接入应配置 TLS 反代与访问限制。`agent_url` 填写 agent 可访问的 HTTPS 接入地址；面板口令从 `panel_token_file` 读取。
+
+中心内置维护调度：到期清理、归属地更新、每日正式版本检查，以及中心时区每天 **04:20** 的在线压缩备份，保留最近 **7 份**。若已有旧 `meterly-backup.timer`，切换前停用，避免重复备份；新完整包不包含旧 timer。磁盘不足只报警，不自动缩短一年明细保留期。
+
+已有容器部署的模板说明位于 [部署模板说明](deploy/compose/README.md)。
+
+## 接入 agent
+
+1. 在系统页填写主机名及 HTTPS 接入地址，生成一次性注册码。
+2. 把注册码保存为权限 `600` 的 `enroll.code`，下载并检查安装器。
+3. 执行以下指令；将 `vX.Y.Z` 换成已经发布的目标正式版本。
+
+```sh
+chmod 600 enroll.code
+sudo ./scripts/install-agent.sh --center https://meterly.internal:8443 \
+  --enroll-code-file ./enroll.code --version vX.Y.Z
+```
+
+安装器也可单独下载后运行，会自动获取**完整版本包**。自签证书加 `--ca-file ./ca.crt`。仅明确需要明文内网时加 `--allow-http`，不会自动降级 HTTPS。token/注册码不放入 URL 或命令行参数。
+
+脚本先检查二进制、units、现有配置、权限及中心连通性，再注册和启用服务。重复安装保留 v2 token 和显式配置；`--version` 始终获取指定版本。旧 agent 的配置和状态不会自动迁移。新状态目录为 `/var/lib/meterly-v2`。
+
+agent 启动时及每 5 分钟发现网站和网卡，通过出站 HTTPS 获取配置/任务，不增加监听端口。配置优先级为：**本机显式字段/overrides → 面板期望配置 → 自动发现**。无效配置保留上次有效配置；停用来源不会被发现流程重新启用，消失的日志保留断点并报警。
+
+网站支持 `/etc/nginx`、OpenResty/1Panel 配置及常见日志目录。当前不支持的路径可在本机 `collectors.site.sources` 与 `allow_dirs` 中显式配置。请保留轮转日志直至积压追平；若旧 inode 的文件已删除，无法凭空恢复其尾部，面板会显示采集异常。
+
+CDN 归因、JSON 日志和可信代理配置见 [CDN 与日志配置](docs/cdn.md)。
+
+## 升级和运行边界
+
+中心每日缓存正式版本信息。面板主机详情填目标版本并确认后，agent 获取固定升级任务。独立 `meterly-agent-updater.service` 下载本仓库对应平台的二进制、核对 SHA256、原子替换、重启并检查本地就绪文件。新版本未就绪会恢复 `.previous`；中心暂时离线不会触发回滚。远程任务不能执行任意 Shell。
+
+确认升级会短暂重启 agent。备份和升级结果可在系统页查看；任务响应超时可刷新查询现有任务，避免重复操作。
+
+更多接口及完整性说明见 [v2 API](docs/api-v2.md)。本次验证与尚待实际环境验收的边界见 [交付验证记录](plans/full-upgrade/verification.md)。

@@ -18,7 +18,7 @@ import (
 	"github.com/domoxiaojun/Meterly/internal/version"
 )
 
-// EnrollRequest / EnrollResponse 与中心 POST /api/v1/enroll/redeem 对应。
+// EnrollRequest / EnrollResponse 与中心 POST /api/v2/enroll/redeem 对应。
 type EnrollRequest struct {
 	Code     string `json:"code"`
 	Hostname string `json:"hostname,omitempty"`
@@ -58,7 +58,7 @@ func RedeemEnroll(ctx context.Context, serverURL, caFile string, allowHTTP bool,
 		tr.TLSClientConfig.RootCAs = pool
 	}
 	body, _ := json.Marshal(EnrollRequest{Code: code, Hostname: hostname})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(serverURL, "/")+"/api/v1/enroll/redeem", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(serverURL, "/")+"/api/v2/enroll/redeem", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

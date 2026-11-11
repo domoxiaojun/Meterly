@@ -1,20 +1,23 @@
 {
   "listen": "127.0.0.1:8787",
-  "db_path": "/var/lib/meterly-server/meterly.db",
+  "db_path": "/var/lib/meterly-server/meterly-v2.db",
   "panel_token_file": "/etc/meterly/panel.token",
   "tz": "Asia/Singapore",
   "reset_day": 9,
   "offline_after_minutes": 5,
   "retention": {
-    "MinuteDays": 14,
-    "HourDays": 400,
-    "TopNHour": 50,
-    "TopNDay": 200,
-    "MinuteDetailHours": 25
+    "MinuteDays": 2,
+    "HourDays": 365,
+    "MinuteDetailHours": 48
   },
   "geo": {
     "dir": "/var/lib/meterly-server/geo",
     "auto_update": true
   },
-  "trusted_proxies": []
+  "trusted_proxies": [],
+  "maintenance": {
+    "backups": true,
+    "keep": 7
+  },
+  "agent_url": "https://meterly.internal:8443"
 }

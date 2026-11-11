@@ -15,7 +15,9 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/domoxiaojun/Meterly/internal/proto"
@@ -23,6 +25,7 @@ import (
 )
 
 type Agent struct {
+	mu      sync.Mutex
 	cfg     *Config
 	buf     *Buffer
 	st      *State
@@ -39,10 +42,18 @@ type Agent struct {
 	Now    func() time.Time
 	BootID func() string
 
-	health       map[string]proto.CollectorHealth
-	backoff      time.Duration
-	nextTry      time.Time
-	lastSentMeta time.Time
+	health        map[string]proto.CollectorHealth
+	backoff       time.Duration
+	nextTry       time.Time
+	lastSentMeta  time.Time
+	baseConfig    Config
+	inventory     *proto.Inventory
+	desired       proto.DesiredConfig
+	configVersion int64
+	configError   string
+	nextDiscovery time.Time
+	DetectSys     *DetectSys
+	upload        chan struct{}
 }
 
 func New(cfg *Config, log *slog.Logger) (*Agent, error) {
@@ -66,12 +77,14 @@ func New(cfg *Config, log *slog.Logger) (*Agent, error) {
 			}
 		}
 		if len(miss) > 0 {
-			if _, err := buf.Append(miss); err != nil {
+			if err := buf.AppendChunks(miss); err != nil && !errors.Is(err, ErrBufferFull) {
 				return nil, err
 			}
 			log.Info("崩溃恢复:已补写待写记录", "n", len(miss))
 		}
-		st.Pending = nil
+		if len(st.Pending) > 0 && buf.LastSeq() >= st.Pending[len(st.Pending)-1].Seq {
+			st.Pending = nil
+		}
 	}
 	if last := buf.LastSeq(); st.NextSeq <= last {
 		st.NextSeq = last + 1
@@ -100,6 +113,7 @@ func New(cfg *Config, log *slog.Logger) (*Agent, error) {
 		Now:    time.Now, BootID: ReadBootID,
 		health: map[string]proto.CollectorHealth{},
 	}
+	a.baseConfig = *cfg
 	if cfg.Collectors.NetDev.Enabled {
 		a.netdev = &NetDev{Path: cfg.Collectors.NetDev.ProcPath, Ifaces: cfg.Collectors.NetDev.Interfaces}
 		a.health["netdev"] = proto.CollectorHealth{Enabled: true}
@@ -125,7 +139,12 @@ func New(cfg *Config, log *slog.Logger) (*Agent, error) {
 	return a, nil
 }
 
-func (a *Agent) Close() error { return a.buf.Close() }
+func (a *Agent) Close() error {
+	if a.site != nil {
+		a.site.Close()
+	}
+	return a.buf.Close()
+}
 
 // Buffer 暴露缓冲(测试/诊断用)。
 func (a *Agent) Buffer() *Buffer { return a.buf }
@@ -168,6 +187,8 @@ func (a *Agent) markErr(name string, now int64, err error) {
 
 // Poll 轮询一次 sing-box(每 poll_interval 调用)。
 func (a *Agent) Poll(ctx context.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.sb == nil {
 		return
 	}
@@ -183,6 +204,12 @@ func (a *Agent) Poll(ctx context.Context) {
 
 // Tick 汇总一次(每 interval 调用):网卡增量 + sing-box 累计 -> 记录 -> state -> 缓冲。返回新增记录数。
 func (a *Agent) Tick(ctx context.Context) (int, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	// 上次提交未完成时先重试；期间不继续消费日志或 Drain 累加器。
+	if err := a.commitPending(); err != nil {
+		return 0, err
+	}
 	now := a.Now().Unix()
 	prevTick := a.st.LastTick
 	var recs []proto.Record
@@ -192,7 +219,7 @@ func (a *Agent) Tick(ctx context.Context) (int, error) {
 		if c.TS > 0 { // 站点日志按请求结束所在分钟归因
 			pts, ts = c.TS, c.TS+60
 		}
-		recs = append(recs, proto.Record{Seq: a.st.NextSeq, TS: ts, PrevTS: pts, Kind: c.Kind, Dim1: c.Key, Dim2: c.Key2, RX: c.RX, TX: c.TX})
+		recs = append(recs, proto.Record{Seq: a.st.NextSeq, TS: ts, PrevTS: pts, Kind: c.Kind, Dim1: c.Key, Dim2: c.Key2, RX: c.RX, TX: c.TX, Site: c.Site})
 		a.st.NextSeq++
 	}
 	if a.netdev != nil {
@@ -222,12 +249,17 @@ func (a *Agent) Tick(ctx context.Context) (int, error) {
 		}
 		a.st.Singbox = a.sb.St
 	}
-	if a.site != nil {
+	if a.site != nil && a.buf.Size() > a.cfg.BufferMaxBytes*3/4 {
+		a.markErr("site", now, errors.New("缓冲积压，暂缓读取日志；请保留轮转文件直到追平"))
+	} else if a.site != nil {
 		got, st, err := a.site.Collect()
 		if err != nil {
 			a.markErr("site", now, err)
 		} else {
-			a.markOK("site", now, fmt.Sprintf("文件 %d,新行 %d,解析失败 %d", st.Files, st.Used, st.Failed))
+			a.markOK("site", now, fmt.Sprintf("文件 %d,新行 %d,解析失败 %d,IP待识别 %d,积压源 %d", st.Files, st.Used, st.Failed, st.Unresolved, st.Backlogged))
+			if st.Failed > 0 || st.Unresolved > 0 {
+				a.markErr("site", now, fmt.Errorf("解析失败 %d 行，客户端 IP 待识别 %d 行", st.Failed, st.Unresolved))
+			}
 		}
 		for _, c := range got {
 			add(c, prevTick)
@@ -264,18 +296,29 @@ func (a *Agent) Tick(ctx context.Context) (int, error) {
 	}
 	a.st.LastTick = now
 	a.st.Pending = recs
-	if err := a.st.Save(a.cfg.StateDir); err != nil {
-		return 0, fmt.Errorf("写 state 失败: %w", err)
-	}
-	dropped, err := a.buf.Append(recs)
-	if err != nil {
-		return 0, fmt.Errorf("写缓冲失败: %w", err)
-	}
-	if dropped > 0 {
-		a.st.Dropped += dropped
-		a.log.Warn("本地缓冲超限,已丢弃最旧记录", "dropped", dropped, "total_dropped", a.st.Dropped)
+	if err := a.commitPending(); err != nil {
+		return 0, err
 	}
 	return len(recs), nil
+}
+
+func (a *Agent) commitPending() error {
+	if err := a.st.Save(a.cfg.StateDir); err != nil {
+		return fmt.Errorf("写 state 失败: %w", err)
+	}
+	last := a.buf.LastSeq()
+	var pending []proto.Record
+	for _, r := range a.st.Pending {
+		if r.Seq > last {
+			pending = append(pending, r)
+		}
+	}
+	if err := a.buf.AppendChunks(pending); err != nil {
+		return fmt.Errorf("写缓冲失败: %w", err)
+	}
+
+	a.st.Pending = nil
+	return a.st.Save(a.cfg.StateDir)
 }
 
 func (a *Agent) ifaceDelta(prev IfaceState, had bool, cur Counter, boot string, now int64) (Counter, bool) {
@@ -311,13 +354,17 @@ func truncate(s string, n int) string {
 }
 
 func (a *Agent) meta(buffered int64) proto.Meta {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	hn, _ := os.Hostname()
 	h := make(map[string]proto.CollectorHealth, len(a.health))
 	for k, v := range a.health {
 		h[k] = v
 	}
 	return proto.Meta{Hostname: hn, AgentVersion: version.Version, InstanceID: a.st.InstanceID, Timezone: localTZ(),
-		BootID: a.BootID(), SentAt: a.Now().Unix(), Buffered: buffered, Dropped: a.st.Dropped, Collectors: h}
+		BootID: a.BootID(), SentAt: a.Now().Unix(), Buffered: buffered, Dropped: a.st.Dropped, Collectors: h,
+		Protocol: proto.Version, DroppedFrom: a.st.DroppedFrom, DroppedTo: a.st.DroppedTo,
+		Inventory: a.inventory, ConfigVersion: a.configVersion, ConfigError: a.configError}
 }
 
 func localTZ() string {
@@ -353,8 +400,15 @@ func (a *Agent) Flush(ctx context.Context, maxBatches int) (int, error) {
 			return sent, err
 		}
 		left := a.buf.Count() - int64(len(recs))
-		if _, err := a.post(ctx, proto.Batch{Meta: a.meta(left), Records: recs}); err != nil {
+		ir, err := a.post(ctx, proto.Batch{Meta: a.meta(left), Records: recs})
+		if err != nil {
 			return sent, err
+		}
+		if ir.MaxSeq < recs[len(recs)-1].Seq {
+			return sent, errors.New("中心未确认完整序列，保留缓冲")
+		}
+		if ir.Rejected > 0 {
+			a.log.Error("中心拒绝了记录", "count", ir.Rejected)
 		}
 		if err := a.buf.Ack(recs[len(recs)-1].Seq); err != nil {
 			return sent, err
@@ -369,7 +423,7 @@ func (a *Agent) post(ctx context.Context, b proto.Batch) (*proto.IngestResponse,
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.cfg.ServerURL, "/")+"/api/v1/ingest", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.cfg.ServerURL, "/")+"/api/v2/ingest", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +452,28 @@ func (a *Agent) post(ctx context.Context, b proto.Batch) (*proto.IngestResponse,
 // Run 常驻:每 poll_interval 轮询 sing-box,每 interval(对齐整分钟)汇总并推送;
 // 推送失败指数退避(最长 5 分钟,token 失效 30 分钟),期间继续采集写缓冲。
 func (a *Agent) Run(ctx context.Context) error {
+	ready, _ := json.Marshal(map[string]any{"version": version.Version, "pid": os.Getpid(), "at": a.Now().Unix()})
+	if e := writeFileAtomic(filepath.Join(a.cfg.StateDir, "ready.json"), ready); e != nil {
+		return e
+	}
+	if err := a.RefreshConfiguration(ctx, true); err != nil {
+		a.log.Warn("初始化自动发现", "err", err)
+	}
+	a.upload = make(chan struct{}, 1)
+	var worker sync.WaitGroup
+	worker.Add(1)
+	go func() {
+		defer worker.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.upload:
+				a.flushCycle(ctx)
+			}
+		}
+	}()
+	defer worker.Wait()
 	iv := a.cfg.Interval.Duration
 	step := iv
 	if a.sb != nil {
@@ -408,6 +484,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	nextTick := a.Now().Truncate(iv).Add(iv)
 	for {
 		now := a.Now()
+		step = iv
+		if a.sb != nil {
+			step = a.cfg.Collectors.Singbox.PollInterval.Duration
+		}
 		wake := now.Truncate(step).Add(step)
 		if wake.After(nextTick) {
 			wake = nextTick
@@ -430,6 +510,20 @@ func (a *Agent) Cycle(ctx context.Context) {
 	if _, err := a.Tick(ctx); err != nil {
 		a.log.Error("汇总失败", "err", err.Error())
 	}
+	if a.upload != nil {
+		select {
+		case a.upload <- struct{}{}:
+		default:
+		}
+		if err := a.RefreshConfiguration(ctx, false); err != nil {
+			a.log.Warn("配置同步失败", "err", err)
+		}
+		return
+	}
+	a.flushCycle(ctx)
+}
+
+func (a *Agent) flushCycle(ctx context.Context) {
 	if a.Now().Before(a.nextTry) {
 		return
 	}

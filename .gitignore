@@ -16,3 +16,7 @@
 .idea/
 .DS_Store
 *.swp
+
+/node_modules/
+/playwright-report/
+/test-results/

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,16 +21,17 @@ import (
 //	<dir>/seg-<首条seq>.jsonl   每行一条 proto.Record,seq 连续递增
 //	<dir>/ack                   中心已确认的最大 seq
 //
-// 超过上限时删除最旧分段并累计丢弃条数(随 meta 上报);只用标准库。
+// 达到容量上限时拒绝追加；调用方保留 Pending，上传后重试，不删除未确认分段。
 type Buffer struct {
-	mu       sync.Mutex
-	dir      string
-	maxBytes int64
-	segBytes int64
-	segs     []*segment
-	acked    int64
-	dropped  int64 // 本进程生命周期内因超限丢弃的条数(累计值由 State 持久化)
-	cur      *os.File
+	mu                     sync.Mutex
+	dir                    string
+	maxBytes               int64
+	segBytes               int64
+	segs                   []*segment
+	acked                  int64
+	dropped                int64 // 本进程生命周期内因超限丢弃的条数(累计值由 State 持久化)
+	droppedFrom, droppedTo int64
+	cur                    *os.File
 }
 
 type segment struct {
@@ -40,9 +42,14 @@ type segment struct {
 
 const defaultSegBytes = 4 << 20
 
+var ErrBufferFull = errors.New("缓冲容量已满，保留待写记录并暂停采集，等待上传释放空间")
+
 func OpenBuffer(dir string, maxBytes int64) (*Buffer, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
+	}
+	if maxBytes <= 0 {
+		maxBytes = 256 << 20
 	}
 	b := &Buffer{dir: dir, maxBytes: maxBytes, segBytes: defaultSegBytes}
 	if maxBytes/8 < b.segBytes {
@@ -134,6 +141,21 @@ func (b *Buffer) Append(recs []proto.Record) (int64, error) {
 		buf.Write(line)
 		buf.WriteByte('\n')
 	}
+	// Reclaim acknowledged segments before enforcing the limit. Unacknowledged data is never evicted.
+	for len(b.segs) > 0 && b.segs[0].last <= b.acked {
+		seg := b.segs[0]
+		if len(b.segs) == 1 && b.cur != nil {
+			_ = b.cur.Close()
+			b.cur = nil
+		}
+		if e := os.Remove(seg.path); e != nil && !os.IsNotExist(e) {
+			return 0, e
+		}
+		b.segs = b.segs[1:]
+	}
+	if b.totalSize()+int64(buf.Len()) > b.maxBytes {
+		return 0, ErrBufferFull
+	}
 	tail := b.tail()
 	if tail == nil || tail.size >= b.segBytes {
 		if b.cur != nil {
@@ -150,15 +172,22 @@ func (b *Buffer) Append(recs []proto.Record) (int64, error) {
 		}
 		b.cur = f
 	}
-	if _, err := b.cur.Write(buf.Bytes()); err != nil {
+	rollback := func(err error) (int64, error) {
+		_ = b.cur.Truncate(tail.size)
+		_ = b.cur.Sync()
+		_ = b.cur.Close()
+		b.cur = nil
 		return 0, err
 	}
+	if _, err := b.cur.Write(buf.Bytes()); err != nil {
+		return rollback(err)
+	}
 	if err := b.cur.Sync(); err != nil {
-		return 0, err
+		return rollback(err)
 	}
 	tail.size += int64(buf.Len())
 	tail.last = recs[len(recs)-1].Seq
-	return b.enforceLimit(), nil
+	return 0, nil
 }
 
 func (b *Buffer) tail() *segment {
@@ -166,25 +195,6 @@ func (b *Buffer) tail() *segment {
 		return nil
 	}
 	return b.segs[len(b.segs)-1]
-}
-
-func (b *Buffer) enforceLimit() int64 {
-	var dropped int64
-	for b.totalSize() > b.maxBytes && len(b.segs) > 1 {
-		s := b.segs[0]
-		from := max(s.first, b.acked+1)
-		if s.last >= from {
-			dropped += s.last - from + 1
-		}
-		os.Remove(s.path)
-		b.segs = b.segs[1:]
-		if s.last > b.acked {
-			b.acked = s.last
-			b.writeAck()
-		}
-	}
-	b.dropped += dropped
-	return dropped
 }
 
 func (b *Buffer) totalSize() int64 {
@@ -221,6 +231,9 @@ func (b *Buffer) Pending(n int) ([]proto.Record, error) {
 			}
 		}
 		f.Close()
+		if err := sc.Err(); err != nil {
+			return nil, err
+		}
 		if len(out) >= n {
 			break
 		}
@@ -235,8 +248,10 @@ func (b *Buffer) Ack(seq int64) error {
 	if seq <= b.acked {
 		return nil
 	}
+	prev := b.acked
 	b.acked = seq
 	if err := b.writeAck(); err != nil {
+		b.acked = prev
 		return err
 	}
 	for len(b.segs) > 1 && b.segs[0].last <= b.acked {
@@ -248,6 +263,12 @@ func (b *Buffer) Ack(seq int64) error {
 
 func (b *Buffer) writeAck() error {
 	return writeFileAtomic(filepath.Join(b.dir, "ack"), []byte(strconv.FormatInt(b.acked, 10)+"\n"))
+}
+
+func (b *Buffer) DroppedRange() (int64, int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.droppedFrom, b.droppedTo
 }
 
 // Count 未确认记录条数。
@@ -299,4 +320,31 @@ func writeFileAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// AppendChunks persists bounded pieces. A failed suffix remains in State.Pending;
+// LastSeq lets the caller safely skip already durable pieces on retry.
+func (b *Buffer) AppendChunks(recs []proto.Record) error {
+	limit := max(b.maxBytes/4, int64(4096))
+	for i := 0; i < len(recs); {
+		j := i
+		size := int64(0)
+		for j < len(recs) {
+			raw, e := json.Marshal(recs[j])
+			if e != nil {
+				return e
+			}
+			n := int64(len(raw) + 1)
+			if j > i && size+n > limit {
+				break
+			}
+			size += n
+			j++
+		}
+		if _, e := b.Append(recs[i:j]); e != nil {
+			return e
+		}
+		i = j
+	}
+	return nil
 }

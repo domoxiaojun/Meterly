@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"fmt"
+	"github.com/domoxiaojun/Meterly/internal/proto"
 	"io"
 	"os"
 	"strconv"
@@ -17,6 +18,7 @@ type Counter struct {
 	RX   uint64
 	TX   uint64
 	TS   int64 // 非 0 时作为记录时间(站点日志按请求结束时刻归因);0 表示用 Tick 当前时间
+	Site *proto.SiteMetrics
 }
 
 // NetDev 读取 /proc/net/dev 中指定网卡的 rx/tx 累计字节。

@@ -13,3 +13,8 @@ tools
 **/secrets
 **/.env
 .github
+node_modules
+test-results
+playwright-report
+plans
+tests

@@ -1,0 +1,81 @@
+package server
+
+import (
+    "context"
+    "encoding/json"
+    "testing"
+    "time"
+
+    "github.com/domoxiaojun/Meterly/internal/proto"
+    "github.com/domoxiaojun/Meterly/internal/store"
+)
+
+func reviewInsert(t *testing.T, s *Server, st *store.Store, host, instance string, records []proto.Record) {
+    t.Helper()
+    h, err := st.HostByName(context.Background(), host)
+    if err != nil { t.Fatal(err) }
+    res, err := st.Ingest(context.Background(), h, s.loc(h.TZ), proto.Meta{InstanceID: instance}, records, "127.0.0.1", s.Now())
+    if err != nil || res.Accepted != len(records) { t.Fatalf("insert: %+v %v", res, err) }
+}
+
+func TestReviewLast1hOverviewMatchesMinutes(t *testing.T) {
+    s, st, _, _ := setup(t, "127.0.0.1:8787")
+    now := time.Date(2026, 11, 11, 8, 30, 0, 0, time.UTC)
+    s.Now = func() time.Time { return now }
+    reviewInsert(t, s, st, "h1", "review", []proto.Record{
+        {Seq: 1, TS: now.Add(-45*time.Minute).Unix(), Kind: proto.KindIface, Dim1: "eth0", RX: 100},
+        {Seq: 2, TS: now.Add(-15*time.Minute).Unix(), Kind: proto.KindIface, Dim1: "eth0", RX: 200},
+    })
+    w := do(s.Handler(), "GET", "/api/v1/overview?period=last1h", panelTok, nil)
+    if w.Code != 200 { t.Fatalf("overview: %d %s", w.Code, w.Body) }
+    var result struct { Hosts []struct { Billed int64 `json:"billed"` } }
+    if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil { t.Fatal(err) }
+    w = do(s.Handler(), "GET", "/api/v1/series?period=last1h&kind=iface&dim1=eth0", panelTok, nil)
+    var series struct { Points []store.Point `json:"points"` }
+    if err := json.Unmarshal(w.Body.Bytes(), &series); err != nil { t.Fatal(err) }
+    var sum int64
+    for _, p := range series.Points { sum += p.Total() }
+    if sum != 300 { t.Fatalf("fixture minute sum: %d", sum) }
+    if len(result.Hosts) != 1 || result.Hosts[0].Billed != sum { t.Fatalf("overview=%+v; minute series total=%d", result.Hosts, sum) }
+}
+
+func TestReviewAllHostTopMatchesHourlyAcrossTimezones(t *testing.T) {
+    s, st, _, _ := setup(t, "127.0.0.1:8787")
+    now := time.Date(2026, 11, 11, 8, 30, 0, 0, time.UTC)
+    s.Now = func() time.Time { return now }
+    if _, err := st.CreateHost(context.Background(), "utc-host", store.HostOpts{TZ: "UTC"}); err != nil { t.Fatal(err) }
+    // 这两个样本都位于面板新加坡时区 11 月 10 日 02:00。
+    ts := time.Date(2026, 11, 9, 18, 1, 0, 0, time.UTC).Unix()
+    for _, host := range []string{"h1", "utc-host"} {
+        reviewInsert(t, s, st, host, "review", []proto.Record{{Seq: 1, TS: ts, Kind: proto.KindSingbox, Dim1: "192.0.2.1", Dim2: "test", RX: 100}})
+    }
+    q := "?host=all&period=custom&start=2026-11-10&end=2026-11-10"
+    w := do(s.Handler(), "GET", "/api/v1/singbox/top"+q, panelTok, nil)
+    if w.Code != 200 { t.Fatalf("top: %d %s", w.Code, w.Body) }
+    var top struct { Total store.Pair `json:"total"` }
+    if err := json.Unmarshal(w.Body.Bytes(), &top); err != nil { t.Fatal(err) }
+    w = do(s.Handler(), "GET", "/api/v1/singbox/inbounds"+q, panelTok, nil)
+    var inbound struct { Rows []store.InboundRow `json:"rows"` }
+    if err := json.Unmarshal(w.Body.Bytes(), &inbound); err != nil { t.Fatal(err) }
+    var sum int64
+    for _, p := range inbound.Rows { sum += p.Total }
+    if sum != 200 { t.Fatalf("fixture hourly sum: %d", sum) }
+    if top.Total.Total() != sum { t.Fatalf("IP top total=%d, inbound total=%d for same period", top.Total.Total(), sum) }
+}
+
+func TestReviewCustomRetentionKeepsHistoricalOverview(t *testing.T) {
+    s, st, _, _ := setup(t, "127.0.0.1:8787")
+    now := time.Date(2026, 11, 11, 8, 30, 0, 0, time.UTC)
+    s.Now = func() time.Time { return now }
+    reviewInsert(t, s, st, "h1", "review", []proto.Record{{Seq: 1, TS: now.Add(-72*time.Hour).Unix(), Kind: proto.KindIface, Dim1: "eth0", RX: 100}})
+    s.cfg.Retention.HourDays = 1
+    if _, err := st.Maintain(context.Background(), s.cfg.Retention, now); err != nil { t.Fatal(err) }
+    var daySum int64
+    if err := st.R.QueryRow("SELECT SUM(rx) FROM fact_day WHERE kind='iface'").Scan(&daySum); err != nil { t.Fatal(err) }
+    if daySum != 100 { t.Fatalf("fixture day sum: %d", daySum) }
+    w := do(s.Handler(), "GET", "/api/v1/overview?period=custom&start=2026-11-08&end=2026-11-08", panelTok, nil)
+    if w.Code != 200 { t.Fatalf("overview: %d %s", w.Code, w.Body) }
+    var result struct { Hosts []struct { Billed int64 `json:"billed"` } }
+    if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil { t.Fatal(err) }
+    if len(result.Hosts) != 1 || result.Hosts[0].Billed != daySum { t.Fatalf("overview=%+v; retained day total=%d", result.Hosts, daySum) }
+}

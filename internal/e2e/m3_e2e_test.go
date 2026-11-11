@@ -126,19 +126,19 @@ func TestM3AgentToPanel(t *testing.T) {
 		}
 		return string(b)
 	}
-	sites := req("/api/v1/sites?period=custom&start=2026-11-11&end=2026-11-11")
+	sites := req("/api/v2/analytics/rank?group=site&period=custom&start=2026-11-11&end=2026-11-11")
 	if !strings.Contains(sites, "media.example.com") {
 		t.Fatalf("sites: %s", sites)
 	}
-	nb := req("/api/v1/netbird?period=custom&start=2026-11-11&end=2026-11-11")
+	nb := req("/api/v2/netbird?period=custom&start=2026-11-11&end=2026-11-11")
 	if !strings.Contains(nb, "peer-a.example.net") {
 		t.Fatalf("netbird: %s", nb)
 	}
-	xr := req("/api/v1/xray?period=custom&start=2026-11-11&end=2026-11-11")
+	xr := req("/api/v2/xray?period=custom&start=2026-11-11&end=2026-11-11")
 	if !strings.Contains(xr, "in-1") {
 		t.Fatalf("xray: %s", xr)
 	}
-	col := req("/api/v1/collectors")
+	col := req("/api/v2/collectors")
 	if !strings.Contains(col, `"status":"enabled"`) || !strings.Contains(col, "site") {
 		t.Fatalf("collectors: %s", col)
 	}

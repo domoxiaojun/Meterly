@@ -30,11 +30,11 @@ type badRequest struct{ msg string }
 func (e badRequest) Error() string { return e.msg }
 
 // factTable 区间对应的事实表:最近 1 小时用分钟表,否则小时表(超出小时表保留期用天表)。
-func factTable(p period, now time.Time) string {
+func factTableFor(st *store.Store, p period, now time.Time) string {
 	if p.Label == "last1h" {
 		return "fact_minute"
 	}
-	return store.TableFor(p.From, now)
+	return st.TableFor(p.From, now)
 }
 
 // series 按粒度取序列并补齐空桶。gran: minute(≤6h)/ hour(≤62 天)/ day。
@@ -48,6 +48,9 @@ func (s *Server) series(r *http.Request, ids []int64, f store.Filter, p period, 
 	}
 	switch gran {
 	case "minute":
+		if p.From < now.Unix()-int64(s.st.Retention.MinuteDetailHours)*3600 {
+			return nil, badRequest{"分钟明细已过期"}
+		}
 		if p.To-p.From > 6*3600 {
 			return nil, badRequest{"分钟粒度最多 6 小时"}
 		}
@@ -57,6 +60,9 @@ func (s *Server) series(r *http.Request, ids []int64, f store.Filter, p period, 
 		}
 		return fill(pts, p.From, min(p.To, now.Unix()/60*60+60), 60, nil), nil
 	case "hour":
+		if p.From < now.Unix()-int64(s.st.Retention.HourDays)*86400 {
+			return nil, badRequest{"小时明细已过期，请选择日汇总"}
+		}
 		if p.To-p.From > 62*86400 {
 			return nil, badRequest{"小时粒度最多 62 天"}
 		}
@@ -66,7 +72,7 @@ func (s *Server) series(r *http.Request, ids []int64, f store.Filter, p period, 
 		}
 		return fill(pts, p.From, min(p.To, now.Unix()/3600*3600+3600), 3600, nil), nil
 	case "day":
-		tbl := store.TableFor(p.From, now)
+		tbl := s.st.TableFor(p.From, now)
 		pts, err := s.st.Series(ctx, tbl, ids, f, p.From, p.To)
 		if err != nil {
 			return nil, errors.New("内部错误")
@@ -297,7 +303,7 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "周期参数无效")
 			return
 		}
-		tbl := factTable(p, now)
+		tbl := factTableFor(s.st, p, now)
 		ids := []int64{h.ID}
 		ifs, err := s.st.KindDim1Totals(ctx, tbl, ids, proto.KindIface, p.From, p.To)
 		if err != nil {
@@ -363,7 +369,7 @@ type providerHist struct {
 }
 
 func (s *Server) billedIn(ctx context.Context, h *store.Host, from, to int64, now time.Time) (int64, error) {
-	m, err := s.st.KindDim1Totals(ctx, store.TableFor(from, now), []int64{h.ID}, proto.KindIface, from, to)
+	m, err := s.st.KindDim1Totals(ctx, s.st.TableFor(from, now), []int64{h.ID}, proto.KindIface, from, to)
 	if err != nil {
 		return 0, err
 	}

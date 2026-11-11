@@ -1,0 +1,4 @@
+→ dist/meterly-agent-linux-amd64
+→ dist/meterly-server-linux-amd64
+→ dist/meterly-agent-linux-arm64
+→ dist/meterly-server-linux-arm64

@@ -28,7 +28,16 @@ func inList(ids []int64) (string, []any) {
 }
 
 // HourRetention 小时表保留期;超出时查询回落到天表。
-var HourRetention = 400 * 24 * time.Hour
+const HourRetention = 365 * 24 * time.Hour
+
+func (s *Store) TableFor(from int64, now time.Time) string {
+	r := s.Retention
+	r.Defaults()
+	if from >= now.Add(-time.Duration(r.HourDays)*24*time.Hour).Unix() {
+		return "fact_hour"
+	}
+	return "fact_day"
+}
 
 // TableFor 选择查询表:范围在小时表保留期内用小时表(时区无关,精确),否则用天表。
 func TableFor(from int64, now time.Time) string {
@@ -74,7 +83,7 @@ func (s *Store) HourSeries(ctx context.Context, ids []int64, kind, dim1 string, 
 func (s *Store) DaySeries(ctx context.Context, ids []int64, kind, dim1 string, from, to int64, loc *time.Location, now time.Time) ([]Point, error) {
 	var hours []Point
 	var err error
-	if TableFor(from, now) == "fact_hour" {
+	if s.TableFor(from, now) == "fact_hour" {
 		hours, err = s.HourSeries(ctx, ids, kind, dim1, from, to)
 	} else {
 		in, args := inList(ids)

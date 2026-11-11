@@ -154,6 +154,7 @@ type LogLine struct {
 	Host    string // $host / $http_host / $server_name
 	HasRecv bool
 	HasHost bool
+	Headers map[string]string
 }
 
 // Parse 按编译格式扫描一行。失败返回 nil。
@@ -201,9 +202,6 @@ func (f *LogFormat) Parse(line string) *LogLine {
 				end = pos + i
 			} else if ti+1 < len(f.tokens) && f.tokens[ti+1].quot != 0 {
 				// 下一个是带引号/括号的变量,中间通常有空格
-				for end > pos && end == len(line) {
-					// find quote
-				}
 				sep := " "
 				if f.tokens[ti+1].quot == '"' {
 					i := strings.Index(line[pos:], " \"")
@@ -242,7 +240,7 @@ func (f *LogFormat) Parse(line string) *LogLine {
 		}
 		vals[t.lit] = val
 	}
-	out := &LogLine{}
+	out := &LogLine{Headers: vals}
 	if ip := vals["remote_addr"]; ip != "" && ip != "-" {
 		if n := normalizeIP(ip); n != "" {
 			out.IP = n
@@ -283,8 +281,9 @@ func (f *LogFormat) Parse(line string) *LogLine {
 		}
 	}
 	if v, ok := vals["request_length"]; ok {
-		out.Recv = parseUint(v)
-		out.HasRecv = true
+		recv, err := strconv.ParseUint(v, 10, 64)
+		out.Recv = recv
+		out.HasRecv = err == nil
 	}
 	for _, k := range []string{"host", "http_host", "server_name"} {
 		if v, ok := vals[k]; ok && v != "" && v != "-" {

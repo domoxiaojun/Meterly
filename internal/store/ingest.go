@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"math/bits"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/domoxiaojun/Meterly/internal/proto"
@@ -36,10 +38,13 @@ const MaxSpread = 7 * 86400
 
 // ValidRecord 基本校验,非法记录跳过(不让一条坏数据卡住整批重试)。
 func ValidRecord(r *proto.Record, now int64) bool {
-	if r.Seq <= 0 || r.TS < now-90*86400 || r.TS > now+600 || r.PrevTS > r.TS {
+	if r.Seq <= 0 || r.TS < now-365*86400 || r.TS > now+600 || r.PrevTS > r.TS {
 		return false
 	}
-	if len(r.Kind) == 0 || len(r.Kind) > 32 || len(r.Dim1) > 128 || len(r.Dim2) > 128 {
+	if !MinuteKinds[r.Kind] || len(r.Dim1) > 253 || len(r.Dim2) > 128 {
+		return false
+	}
+	if m := r.Site; m != nil && (r.Kind != proto.KindSite || m.Status < 0 || m.Status > 599 || m.Requests >= 1<<40 || len(m.IPSource) > 32) {
 		return false
 	}
 	for _, c := range r.Kind {
@@ -84,29 +89,109 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 			add(minute, bucketKey{ts / 60 * 60, r.Kind, r.Dim1, r.Dim2}, rx, tx)
 		}
 		add(hour, bucketKey{ts / 3600 * 3600, r.Kind, r.Dim1, r.Dim2}, rx, tx)
-		add(day, bucketKey{DayStart(ts, loc), r.Kind, r.Dim1, r.Dim2}, rx, tx)
+		dim1 := r.Dim1
+		if r.Kind == proto.KindSingbox {
+			dim1 = "~summary"
+		}
+		add(day, bucketKey{DayStart(ts, loc), r.Kind, dim1, r.Dim2}, rx, tx)
 	}
 	maxSeq, maxTS := hwm, int64(0)
 	nowU := now.Unix()
+	billingIface := h.BillingIface
+	if billingIface == "" && meta.Inventory != nil {
+		billingIface = meta.Inventory.DefaultInterface
+	}
+	seenSeq := map[int64]bool{}
+	ipIDs := map[string]int64{}
 	for i := range recs {
-		r := &recs[i]
-		if r.Seq <= hwm {
+		record := recs[i]
+		r := &record
+		if r.Seq <= hwm || seenSeq[r.Seq] {
 			res.Duplicates++
 			continue
 		}
+		seenSeq[r.Seq] = true
 		if r.Seq > maxSeq {
 			maxSeq, maxTS = r.Seq, r.TS
 		}
 		if !ValidRecord(r, nowU) {
 			res.Rejected++
+			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO data_issues(host_id,from_ts,to_ts,reason) VALUES(?,?,?,?)`, h.ID, nowU-60, nowU, "中心拒绝非法记录"); err != nil {
+				return res, err
+			}
 			continue
 		}
 		res.Accepted++
+		if r.Kind == proto.KindSite && strings.HasPrefix(r.Dim1, "source-") {
+			r.Dim1 = "unidentified:" + h.Name + ":" + r.Dim1
+		}
+		if billingIface == "" && r.Kind == proto.KindIface {
+			billingIface = r.Dim1
+		}
+		if r.Kind == proto.KindSingbox {
+			if ip, e := netip.ParseAddr(r.Dim1); e == nil {
+				r.Dim1 = ip.Unmap().WithZone("").String()
+			}
+		}
+		if r.Kind == proto.KindSite || r.Kind == proto.KindSingbox {
+			address := r.Dim1
+			if r.Kind == proto.KindSite {
+				address = r.Dim2
+			}
+			id, ok := ipIDs[address]
+			if !ok {
+				id, err = ensureIP(ctx, tx, address)
+				if err != nil {
+					return res, err
+				}
+				ipIDs[address] = id
+			}
+			if r.Kind == proto.KindSite {
+				if err = ingestSite(ctx, tx, h.ID, r, id); err != nil {
+					return res, err
+				}
+			}
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO collection_coverage(host_id,kind,first_ts,last_ts) VALUES(?,?,?,?) ON CONFLICT(host_id,kind) DO UPDATE SET first_ts=MIN(first_ts,excluded.first_ts),last_ts=MAX(last_ts,excluded.last_ts)`, h.ID, r.Kind, r.TS-60, r.TS); err != nil {
+			return res, err
+		}
+		if r.Kind == proto.KindSite && r.Site != nil {
+			copy := *r
+			copy.Dim2 = ""
+			place(&copy, r.TS-1, r.RX, r.TX)
+			copy.Kind = proto.KindSiteReq
+			place(&copy, r.TS-1, r.Site.Requests, 0)
+			continue
+		}
 		span := r.TS - r.PrevTS
 		if r.Kind == proto.KindIface && r.PrevTS > 0 && span > 120 && span <= MaxSpread {
 			Spread(r.PrevTS, r.TS, r.RX, r.TX, func(ts int64, rx, tx uint64) { place(r, ts, rx, tx) })
 		} else {
 			place(r, r.TS-1, r.RX, r.TX) // 覆盖 (prev, ts],整点样本归入前一分钟
+		}
+	}
+	for name, health := range meta.Collectors {
+		kind := name
+		if name == "netdev" {
+			kind = proto.KindIface
+		}
+		if !health.Enabled {
+			continue
+		}
+		if health.LastOK > 0 {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO collection_coverage(host_id,kind,first_ts,last_ts) VALUES(?,?,?,?) ON CONFLICT(host_id,kind) DO UPDATE SET last_ts=MAX(last_ts,excluded.last_ts)`, h.ID, kind, health.LastOK, health.LastOK); err != nil {
+				return res, err
+			}
+		}
+		if health.LastErr != "" {
+			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO data_issues(host_id,from_ts,to_ts,reason) VALUES(?,?,?,?)`, h.ID, nowU-60, nowU, name+": "+health.LastErr); err != nil {
+				return res, err
+			}
+		}
+	}
+	if meta.DroppedFrom > 0 && meta.DroppedTo >= meta.DroppedFrom {
+		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO data_issues(host_id,from_ts,to_ts,reason) VALUES(?,?,?,?)`, h.ID, meta.DroppedFrom, meta.DroppedTo, "agent 缓冲数据丢弃"); err != nil {
+			return res, err
 		}
 	}
 	for tbl, m := range map[string]map[bucketKey]*[2]uint64{"fact_minute": minute, "fact_hour": hour, "fact_day": day} {
@@ -133,9 +218,30 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 			return res, err
 		}
 	}
+	if meta.Inventory != nil {
+		copyInventory := *meta.Inventory
+		copyInventory.Sources = append([]proto.Source(nil), meta.Inventory.Sources...)
+		meta.Inventory = &copyInventory
+		for i := range meta.Inventory.Sources {
+			src := &meta.Inventory.Sources[i]
+			if strings.HasPrefix(src.Site, "source-") {
+				src.Site = "unidentified:" + h.Name + ":" + src.Site
+			}
+			if src.Site != "" {
+				if health := meta.Collectors["site"]; !src.Disabled && src.Available && health.LastOK > 0 {
+					if _, err = tx.ExecContext(ctx, `INSERT INTO source_coverage(host_id,site,first_ts,last_ts) VALUES(?,?,?,?) ON CONFLICT(host_id,site) DO UPDATE SET last_ts=MAX(last_ts,excluded.last_ts)`, h.ID, src.Site, health.LastOK, health.LastOK); err != nil {
+						return res, err
+					}
+				}
+				if _, err = tx.ExecContext(ctx, `INSERT INTO sites(site,first_seen,last_seen) VALUES(?,?,?) ON CONFLICT(site) DO UPDATE SET last_seen=MAX(last_seen,excluded.last_seen)`, src.Site, nowU, nowU); err != nil {
+					return res, err
+				}
+			}
+		}
+	}
 	mj, _ := json.Marshal(meta)
-	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET last_seen=?, last_ip=?, agent_version=?, meta_json=? WHERE id=?`,
-		nowU, clientIP, truncate(meta.AgentVersion, 64), string(mj), h.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE hosts SET billing_iface=CASE WHEN billing_iface='' THEN ? ELSE billing_iface END,last_seen=?, last_ip=?, agent_version=?, meta_json=? WHERE id=?`,
+		billingIface, nowU, clientIP, truncate(meta.AgentVersion, 64), string(mj), h.ID); err != nil {
 		return res, err
 	}
 	res.MaxSeq = maxSeq

@@ -105,13 +105,11 @@ func serve(args []string, log *slog.Logger) error {
 	srv := server.New(cfg, st, web.FS(), log)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go srv.RunMaintenance(ctx, 10*time.Minute)
+	schedulerDone := make(chan struct{})
+	go func() { defer close(schedulerDone); srv.RunScheduler(ctx) }()
+	defer func() { stop(); <-schedulerDone; srv.Close() }()
 	gs := srv.Geo().Status()
 	log.Info("归属地库", "dir", cfg.Geo.Dir, "city", gs.City.Loaded, "asn", gs.ASN.Loaded, "auto_update", cfg.Geo.AutoUpdateOn())
-	if cfg.Geo.AutoUpdateOn() {
-		u := &geo.Updater{DB: srv.Geo(), BaseURL: cfg.Geo.BaseURL, Log: log}
-		go u.Run(ctx, time.Duration(cfg.Geo.CheckHours)*time.Hour)
-	}
 	hs := &http.Server{Addr: cfg.Listen, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 60 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 16 << 10}
 	go func() {

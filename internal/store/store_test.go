@@ -148,7 +148,7 @@ func TestIngestSpreadsAfterAgentDowntime(t *testing.T) {
 	}
 }
 
-func TestTopNCompactionKeepsTotals(t *testing.T) {
+func TestFullIPRetentionKeepsTotals(t *testing.T) {
 	s := open(t)
 	h := host(t, s, "a")
 	ctx := context.Background()
@@ -167,11 +167,11 @@ func TestTopNCompactionKeepsTotals(t *testing.T) {
 	if _, err := s.Ingest(ctx, h, cycle.SGT, proto.Meta{InstanceID: "x"}, recs, "", time.Unix(hourTS+3600, 0)); err != nil {
 		t.Fatal(err)
 	}
-	merged, err := s.Maintain(ctx, Retention{TopNHour: 50, TopNDay: 100}, time.Unix(hourTS+3*86400, 0))
+	merged, err := s.Maintain(ctx, Retention{}, time.Unix(hourTS+3*86400, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if merged != 70+20 {
+	if merged != 0 {
 		t.Fatalf("合并行数 %d", merged)
 	}
 	for _, tbl := range []string{"fact_hour", "fact_day"} {
@@ -192,7 +192,7 @@ func TestTopNCompactionKeepsTotals(t *testing.T) {
 		t.Fatalf("排行(含其他/未归因)之和应等于总量: %+v first=%s", sum, rows[0].IP)
 	}
 	// 幂等:再跑一次不再合并
-	if n, _ := s.Maintain(ctx, Retention{TopNHour: 50, TopNDay: 100}, time.Unix(hourTS+3*86400, 0)); n != 0 {
+	if n, _ := s.Maintain(ctx, Retention{}, time.Unix(hourTS+3*86400, 0)); n != 0 {
 		t.Fatalf("重复合并 %d", n)
 	}
 }

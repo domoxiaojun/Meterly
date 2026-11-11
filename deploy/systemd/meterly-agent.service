@@ -12,7 +12,7 @@ Restart=always
 RestartSec=10
 Nice=10
 IOSchedulingClass=idle
-MemoryMax=64M
+MemoryMax=256M
 TasksMax=64
 
 # ---- 加固(真实主机上用 systemd-analyze security meterly-agent 复核)----
@@ -20,7 +20,7 @@ NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=read-only
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectKernelTunables=yes
@@ -40,9 +40,9 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 UMask=0077
-StateDirectory=meterly
+StateDirectory=meterly-v2
 StateDirectoryMode=0700
-ReadWritePaths=/var/lib/meterly
+ReadWritePaths=/var/lib/meterly-v2
 ReadOnlyPaths=/etc/meterly -/etc/sing-box
 # 站点日志 / 1Panel / x-ui 路径由 install-agent.sh 写入 drop-in meterly-agent.service.d/collectors.conf
 

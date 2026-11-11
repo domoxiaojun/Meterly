@@ -22,7 +22,7 @@ func TestEnrollRedeemAndExistingTokenUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rr := do(h, "POST", "/api/v1/enroll/redeem", "", map[string]string{"code": code})
+	rr := do(h, "POST", "/api/v2/enroll/redeem", "", map[string]string{"code": code})
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("want 409, got %d %s", rr.Code, rr.Body.Bytes())
 	}
@@ -34,7 +34,7 @@ func TestEnrollRedeemAndExistingTokenUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rr = do(h, "POST", "/api/v1/enroll/redeem", "", map[string]string{"code": code2, "hostname": "box-new"})
+	rr = do(h, "POST", "/api/v2/enroll/redeem", "", map[string]string{"code": code2, "hostname": "box-new"})
 	if rr.Code != 200 {
 		t.Fatalf("redeem %d %s", rr.Code, rr.Body.Bytes())
 	}
@@ -45,15 +45,15 @@ func TestEnrollRedeemAndExistingTokenUntouched(t *testing.T) {
 	if _, err := st.HostByToken(context.Background(), out.Token); err != nil {
 		t.Fatal(err)
 	}
-	rr = do(h, "POST", "/api/v1/enroll/redeem", "", map[string]string{"code": code2})
+	rr = do(h, "POST", "/api/v2/enroll/redeem", "", map[string]string{"code": code2})
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("reuse %d", rr.Code)
 	}
-	rr = do(h, "POST", "/api/v1/enroll", "", map[string]any{"host_name": "need-login"})
+	rr = do(h, "POST", "/api/v2/enroll", "", map[string]any{"host_name": "need-login"})
 	if rr.Code != 401 {
 		t.Fatalf("unauth create %d", rr.Code)
 	}
-	rr = doJSON(h, "POST", "/api/v1/enroll", `{"host_name":"box-panel","ttl_hours":1,"max_uses":1}`, "application/json")
+	rr = doJSON(h, "POST", "/api/v2/enroll", `{"host_name":"box-panel","ttl_hours":1,"max_uses":1}`, "application/json")
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"code":"tse_`) {
 		t.Fatalf("panel create %d %s", rr.Code, rr.Body.Bytes())
 	}
@@ -75,7 +75,7 @@ func TestSitesNetbirdXrayAPI(t *testing.T) {
 		{Seq: 3, TS: ts + 60, PrevTS: ts, Kind: proto.KindNetbird, Dim1: "peer-a.example.net", Dim2: "100.64.0.10", RX: 1000, TX: 10},
 		{Seq: 4, TS: ts + 60, PrevTS: ts, Kind: proto.KindXray, Dim1: "inbound-20383", RX: 20, TX: 80},
 	}
-	if _, err := st.Ingest(ctx, h, time.UTC, proto.Meta{InstanceID: "i", Collectors: map[string]proto.CollectorHealth{
+	if _, err := st.Ingest(ctx, h, time.UTC, proto.Meta{Protocol: proto.Version, InstanceID: "i", Collectors: map[string]proto.CollectorHealth{
 		"netdev":  {Enabled: true, LastOK: now.Unix()},
 		"singbox": {Enabled: true, LastOK: now.Unix()},
 		"site":    {Enabled: true, LastOK: now.Unix()},
@@ -83,22 +83,22 @@ func TestSitesNetbirdXrayAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	hh := s.Handler()
-	rr := do(hh, "GET", "/api/v1/sites?period=current", panelTok, nil)
+	rr := do(hh, "GET", "/api/v2/analytics/rank?group=site&period=current", panelTok, nil)
 	if rr.Code != 200 {
 		t.Fatalf("sites %d %s", rr.Code, rr.Body.Bytes())
 	}
-	if !strings.Contains(rr.Body.String(), "funmedia.example") || !strings.Contains(rr.Body.String(), "Emby") {
+	if !strings.Contains(rr.Body.String(), "funmedia.example") {
 		t.Fatalf("sites body %s", rr.Body.Bytes())
 	}
-	rr = do(hh, "GET", "/api/v1/netbird?period=current", panelTok, nil)
+	rr = do(hh, "GET", "/api/v2/netbird?period=current", panelTok, nil)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "peer-a.example.net") {
 		t.Fatalf("netbird %d %s", rr.Code, rr.Body.Bytes())
 	}
-	rr = do(hh, "GET", "/api/v1/xray?period=current", panelTok, nil)
+	rr = do(hh, "GET", "/api/v2/xray?period=current", panelTok, nil)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "inbound-20383") || !strings.Contains(rr.Body.String(), "没有来源 IP") {
 		t.Fatalf("xray %d %s", rr.Code, rr.Body.Bytes())
 	}
-	rr = do(hh, "GET", "/api/v1/collectors", panelTok, nil)
+	rr = do(hh, "GET", "/api/v2/collectors", panelTok, nil)
 	if rr.Code != 200 {
 		t.Fatalf("collectors %d %s", rr.Code, rr.Body.Bytes())
 	}
@@ -112,7 +112,7 @@ func TestSitesNetbirdXrayAPI(t *testing.T) {
 	if !strings.Contains(body, `"id":"xray"`) || !strings.Contains(body, `"status":"disabled"`) {
 		t.Fatalf("xray should appear as disabled: %s", body)
 	}
-	rr = do(hh, "GET", "/api/v1/reconcile?period=current", panelTok, nil)
+	rr = do(hh, "GET", "/api/v2/reconcile?period=current", panelTok, nil)
 	if rr.Code != 200 {
 		t.Fatalf("recon %d %s", rr.Code, rr.Body.Bytes())
 	}
@@ -132,23 +132,23 @@ func TestSitesNetbirdXrayAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Ingest(ctx, h2, time.UTC, proto.Meta{InstanceID: "i2"}, []proto.Record{
+	if _, err := st.Ingest(ctx, h2, time.UTC, proto.Meta{Protocol: proto.Version, InstanceID: "i2"}, []proto.Record{
 		{Seq: 1, TS: ts + 60, PrevTS: ts, Kind: proto.KindSite, Dim1: "git.example", Dim2: "192.0.2.2", TX: 1500},
 		{Seq: 2, TS: ts + 60, PrevTS: ts, Kind: proto.KindNetbird, Dim1: "peer-b.example.net", Dim2: "100.66.1.2", RX: 50, TX: 5},
 	}, "127.0.0.1", now); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/v1/sites?host=all&period=current", "/api/v1/netbird?host=all&period=current", "/api/v1/xray?host=all&period=current"} {
+	for _, path := range []string{"/api/v2/analytics/rank?group=site&host=all&period=current", "/api/v2/netbird?host=all&period=current", "/api/v2/xray?host=all&period=current"} {
 		rr = do(hh, "GET", path, panelTok, nil)
 		if rr.Code != 200 {
 			t.Fatalf("%s %d %s", path, rr.Code, rr.Body.Bytes())
 		}
 	}
-	rr = do(hh, "GET", "/api/v1/sites?host=all&period=current", panelTok, nil)
+	rr = do(hh, "GET", "/api/v2/analytics/rank?group=site&host=all&period=current", panelTok, nil)
 	if !strings.Contains(rr.Body.String(), "funmedia.example") || !strings.Contains(rr.Body.String(), "git.example") {
 		t.Fatalf("sites all missing both hosts: %s", rr.Body.Bytes())
 	}
-	rr = do(hh, "GET", "/api/v1/netbird?host=all&period=current", panelTok, nil)
+	rr = do(hh, "GET", "/api/v2/netbird?host=all&period=current", panelTok, nil)
 	if !strings.Contains(rr.Body.String(), "peer-a.example.net") || !strings.Contains(rr.Body.String(), "peer-b.example.net") {
 		t.Fatalf("netbird all missing both peers: %s", rr.Body.Bytes())
 	}

@@ -1,0 +1,2 @@
+ok  	github.com/domoxiaojun/Meterly/internal/agent	2.425s
+ok  	github.com/domoxiaojun/Meterly/internal/e2e	1.793s

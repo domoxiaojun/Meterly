@@ -1,0 +1,6 @@
+=== RUN   TestReviewAdjacentQuotedFieldTerminates
+    project_review_test.go:85: Parse never returned: adjacent quoted field enters an empty loop; real Collect blocks Tick and Flush
+--- FAIL: TestReviewAdjacentQuotedFieldTerminates (0.20s)
+FAIL
+FAIL	github.com/domoxiaojun/Meterly/internal/agent	0.609s
+FAIL

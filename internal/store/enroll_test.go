@@ -1,7 +1,9 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,60 +107,27 @@ func TestEnrollExistingHostRequiresReissue(t *testing.T) {
 	}
 }
 
-func TestMigrateExistingM2DB(t *testing.T) {
-	src := "/workspace/traffic-project/e2e/m2/srv.db"
-	if _, err := os.Stat(src); err != nil {
-		t.Skip("no M2 fixture db:", err)
+func TestRejectOldDatabaseWithoutModification(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, e := sql.Open("sqlite", path)
+	if e != nil {
+		t.Fatal(e)
 	}
-	dir := t.TempDir()
-	dst := filepath.Join(dir, "copy.db")
-	b, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatal(err)
+	if _, e = db.Exec("CREATE TABLE settings(k TEXT PRIMARY KEY,v TEXT); INSERT INTO settings VALUES('schema_version','3'); CREATE TABLE old_data(v TEXT); INSERT INTO old_data VALUES('keep')"); e != nil {
+		t.Fatal(e)
 	}
-	if err := os.WriteFile(dst, b, 0o600); err != nil {
-		t.Fatal(err)
+	db.Close()
+	before, _ := os.ReadFile(path)
+	if st, e := Open(path); e == nil {
+		st.Close()
+		t.Fatal("old schema must be rejected")
 	}
-	st, err := Open(dst)
-	if err != nil {
-		t.Fatal(err)
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("old database was modified")
 	}
-	defer st.Close()
-	v, err := st.SchemaVersion()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v != CurrentSchema {
-		t.Fatalf("schema %d, want %d", v, CurrentSchema)
-	}
-	ctx := context.Background()
-	hs, err := st.Hosts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(hs) == 0 {
-		t.Fatal("expected existing hosts to survive migration")
-	}
-	// 注册码表可用,不影响已有 token 哈希
-	code, _, err := st.CreateEnroll(ctx, "m3-test-host", EnrollOpts{TTL: time.Hour}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.RedeemEnroll(ctx, code, "", time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	// 再打开一次应幂等
-	st.Close()
-	st2, err := Open(dst)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st2.Close()
-	if v, _ := st2.SchemaVersion(); v != CurrentSchema {
-		t.Fatalf("reopen schema %d", v)
-	}
-	if _, err := st2.HostByName(ctx, hs[0].Name); err != nil {
-		t.Fatal("host lost after remigrate", err)
+	if _, e = os.Stat(path + "-wal"); e == nil {
+		t.Fatal("created WAL for rejected database")
 	}
 }
 
@@ -208,11 +177,11 @@ func TestSiteCompactPerSite(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	n, err := st.compactSite(ctx, "fact_hour", 2, hour+1)
+	n, err := st.Maintain(ctx, Retention{}, time.Unix(hour+1, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 3+1 { // a: 3 merged, b: 1 merged
+	if n != 0 { // a: 3 merged, b: 1 merged
 		t.Fatalf("merged %d, want 4", n)
 	}
 	rows, tot, err := st.SiteIPs(ctx, "fact_hour", []int64{h.ID}, "a.example", hour, hour+3600, 20)
@@ -230,10 +199,10 @@ func TestSiteCompactPerSite(t *testing.T) {
 			kept += r.TX
 		}
 	}
-	if other != 30+20+10 {
+	if other != 0 {
 		t.Fatalf("other %d", other)
 	}
-	if kept != 500+400 {
+	if kept != 500+400+30+20+10 {
 		t.Fatalf("kept %d", kept)
 	}
 }

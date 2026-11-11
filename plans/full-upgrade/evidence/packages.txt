@@ -1,0 +1,16 @@
+本地构建验证（未发布）
+
+SHA256SUMS: 6/6 OK
+meterly-agent-linux-amd64: ELF x86-64, statically linked
+meterly-agent-linux-arm64: ELF ARM aarch64, statically linked
+
+完整包包含：
+meterly-agent
+meterly-server
+deploy/systemd/meterly-server.service
+deploy/systemd/meterly-agent.service
+deploy/systemd/meterly-agent-updater.service
+deploy/config/agent.example.json
+deploy/config/server.example.json
+scripts/install-agent.sh
+scripts/uninstall-agent.sh

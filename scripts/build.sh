@@ -22,6 +22,6 @@ case "${1:-build}" in
       echo "→ dist/$b-linux-$a"
       GOOS=linux GOARCH=$a go build -trimpath -ldflags "$LDFLAGS" -o "dist/$b-linux-$a" "./cmd/$b"
     done; done
-    (cd dist && sha256sum meterly-*-linux-* > SHA256SUMS && cat SHA256SUMS);;
+    scripts/package.sh;;
   *) echo "用法: $0 [build|dist]"; exit 2;;
 esac

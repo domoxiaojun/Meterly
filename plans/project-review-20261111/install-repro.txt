@@ -1,0 +1,16 @@
+CASE standalone missing unit: exit=2
+======= 探测本机采集器 =======
+review: existing old binary
+缺少 --unit-file 且 <temporary-root>/fresh/etc/systemd/system/meterly-agent.service 不存在(仓库内也没有 deploy/systemd/meterly-agent.service)
+
+CASE explicit version reuses installed binary: exit=0
+======= 探测本机采集器 =======
+review: existing old binary
+
+[dry-run] 未修改任何文件、未注册、未安装服务。
+
+CASE existing install copies binary onto itself: exit=64
+======= 探测本机采集器 =======
+review: existing old binary
+install: <temporary-root>/existing/usr/local/bin/meterly-agent and <temporary-root>/existing/usr/local/bin/meterly-agent are the same file
+

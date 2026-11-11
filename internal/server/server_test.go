@@ -41,6 +41,9 @@ func do(h http.Handler, method, path, auth string, body any) *httptest.ResponseR
 		b, _ = json.Marshal(body)
 	}
 	req := httptest.NewRequest(method, path, bytes.NewReader(b))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if auth != "" {
 		req.Header.Set("Authorization", "Bearer "+auth)
 	}
@@ -52,21 +55,21 @@ func do(h http.Handler, method, path, auth string, body any) *httptest.ResponseR
 func TestAuthSeparation(t *testing.T) {
 	s, _, logs, hostTok := setup(t, "127.0.0.1:8787")
 	h := s.Handler()
-	batch := proto.Batch{Meta: proto.Meta{InstanceID: "x"}, Records: []proto.Record{{Seq: 1, TS: time.Now().Unix(), Kind: "iface", Dim1: "eth0", RX: 1, TX: 1}}}
-	if w := do(h, "POST", "/api/v1/ingest", hostTok, batch); w.Code != 200 {
+	batch := proto.Batch{Meta: proto.Meta{Protocol: proto.Version, InstanceID: "x"}, Records: []proto.Record{{Seq: 1, TS: time.Now().Unix(), Kind: "iface", Dim1: "eth0", RX: 1, TX: 1}}}
+	if w := do(h, "POST", "/api/v2/ingest", hostTok, batch); w.Code != 200 {
 		t.Fatalf("host token ingest: %d %s", w.Code, w.Body)
 	}
-	if w := do(h, "POST", "/api/v1/ingest", panelTok, batch); w.Code != 401 {
+	if w := do(h, "POST", "/api/v2/ingest", panelTok, batch); w.Code != 401 {
 		t.Fatalf("面板口令不能用于 ingest: %d", w.Code)
 	}
-	if w := do(h, "GET", "/api/v1/overview", hostTok, nil); w.Code != 401 {
+	if w := do(h, "GET", "/api/v2/overview", hostTok, nil); w.Code != 401 {
 		t.Fatalf("host token 不能访问面板: %d", w.Code)
 	}
-	if w := do(h, "GET", "/api/v1/overview", "", nil); w.Code != 401 {
+	if w := do(h, "GET", "/api/v2/overview", "", nil); w.Code != 401 {
 		t.Fatalf("未登录应 401: %d", w.Code)
 	}
-	w := do(h, "GET", "/api/v1/overview", panelTok, nil)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"name":"h1"`) {
+	w := do(h, "GET", "/api/v2/overview", panelTok, nil)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"host_count":1`) {
 		t.Fatalf("面板口令访问: %d %s", w.Code, w.Body)
 	}
 	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
@@ -78,7 +81,7 @@ func TestAuthSeparation(t *testing.T) {
 	if w.Code != 200 || len(c) == 0 || !c[0].HttpOnly || strings.Contains(c[0].Value, panelTok) {
 		t.Fatalf("登录 Cookie 异常: %d %+v", w.Code, c)
 	}
-	req := httptest.NewRequest("GET", "/api/v1/me", nil)
+	req := httptest.NewRequest("GET", "/api/v2/me", nil)
 	req.AddCookie(c[0])
 	rw := httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
@@ -86,7 +89,7 @@ func TestAuthSeparation(t *testing.T) {
 		t.Fatalf("Cookie 访问失败: %d", rw.Code)
 	}
 	// 篡改 Cookie
-	req = httptest.NewRequest("GET", "/api/v1/me", nil)
+	req = httptest.NewRequest("GET", "/api/v2/me", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: "9999999999.deadbeef"})
 	rw = httptest.NewRecorder()
 	h.ServeHTTP(rw, req)
@@ -103,13 +106,13 @@ func TestRevokedAndRateLimit(t *testing.T) {
 	s, st, _, hostTok := setup(t, "127.0.0.1:8787")
 	h := s.Handler()
 	st.RevokeHost(context.Background(), "h1")
-	if w := do(h, "POST", "/api/v1/ingest", hostTok, proto.Batch{}); w.Code != 401 {
+	if w := do(h, "POST", "/api/v2/ingest", hostTok, proto.Batch{}); w.Code != 401 {
 		t.Fatalf("吊销后应 401: %d", w.Code)
 	}
 	// 错误 token 连续尝试触发限速
 	limited := false
 	for i := 0; i < 40; i++ {
-		if w := do(h, "POST", "/api/v1/ingest", "bad", proto.Batch{}); w.Code == 429 {
+		if w := do(h, "POST", "/api/v2/ingest", "bad", proto.Batch{}); w.Code == 429 {
 			limited = true
 			break
 		}
@@ -122,7 +125,7 @@ func TestRevokedAndRateLimit(t *testing.T) {
 func TestOversizedBatch(t *testing.T) {
 	s, _, _, hostTok := setup(t, "127.0.0.1:8787")
 	recs := make([]proto.Record, proto.MaxRecordsPerBatch+1)
-	if w := do(s.Handler(), "POST", "/api/v1/ingest", hostTok, proto.Batch{Records: recs}); w.Code != 413 {
+	if w := do(s.Handler(), "POST", "/api/v2/ingest", hostTok, proto.Batch{Records: recs}); w.Code != 413 {
 		t.Fatalf("超大批次应 413: %d", w.Code)
 	}
 }
@@ -145,11 +148,11 @@ func TestOverviewBillingAndPeriod(t *testing.T) {
 	// 周期边界两侧各一条:11-08 23:59 SGT(上期)与 11-09 00:01 SGT(本期)
 	b1 := time.Date(2026, 11, 8, 15, 59, 30, 0, time.UTC).Unix()
 	b2 := time.Date(2026, 11, 8, 16, 1, 0, 0, time.UTC).Unix()
-	batch := proto.Batch{Meta: proto.Meta{InstanceID: "x"}, Records: []proto.Record{
+	batch := proto.Batch{Meta: proto.Meta{Protocol: proto.Version, InstanceID: "x"}, Records: []proto.Record{
 		{Seq: 1, TS: b1, Kind: "iface", Dim1: "eth0", RX: 100, TX: 1000},
 		{Seq: 2, TS: b2, Kind: "iface", Dim1: "eth0", RX: 7, TX: 70},
 	}}
-	if w := do(s.Handler(), "POST", "/api/v1/ingest", hostTok, batch); w.Code != 200 {
+	if w := do(s.Handler(), "POST", "/api/v2/ingest", hostTok, batch); w.Code != 200 {
 		t.Fatal(w.Body)
 	}
 	var ov struct {
@@ -158,12 +161,12 @@ func TestOverviewBillingAndPeriod(t *testing.T) {
 			Period struct{ Start, End string }
 		}
 	}
-	w := do(s.Handler(), "GET", "/api/v1/overview?period=current", panelTok, nil)
+	w := do(s.Handler(), "GET", "/api/v2/billing/overview?period=current", panelTok, nil)
 	json.Unmarshal(w.Body.Bytes(), &ov)
 	if ov.Hosts[0].Billed != 70 || ov.Hosts[0].Period.Start != "2026-11-09" || ov.Hosts[0].Period.End != "2026-12-08" {
 		t.Fatalf("本期(仅出站)应为 70: %s", w.Body)
 	}
-	w = do(s.Handler(), "GET", "/api/v1/overview?period=previous", panelTok, nil)
+	w = do(s.Handler(), "GET", "/api/v2/billing/overview?period=previous", panelTok, nil)
 	json.Unmarshal(w.Body.Bytes(), &ov)
 	if ov.Hosts[0].Billed != 1000 {
 		t.Fatalf("上期应为 1000: %s", w.Body)

@@ -33,8 +33,28 @@ func resolvePeriod(r *http.Request, now time.Time, loc *time.Location, resetDay 
 		s, e = cycle.Offset(now, resetDay, 0, loc)
 	case "previous":
 		s, e = cycle.Offset(now, resetDay, -1, loc)
+	case "today", "yesterday", "last7d", "last30d", "day":
+		local := now.In(loc)
+		s = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+		e = now
+		switch p.Label {
+		case "yesterday":
+			e = s
+			s = s.AddDate(0, 0, -1)
+		case "last7d":
+			s = s.AddDate(0, 0, -6)
+		case "last30d":
+			s = s.AddDate(0, 0, -29)
+		case "day":
+			var err error
+			s, err = cycle.ParseDay(q.Get("start"), loc)
+			if err != nil {
+				return p, false
+			}
+			e = s.AddDate(0, 0, 1)
+		}
 	case "last1h":
-		e = now.Truncate(time.Minute).Add(time.Minute)
+		e = now.Truncate(time.Minute)
 		s = e.Add(-time.Hour)
 	case "custom":
 		var err1, err2 error
@@ -122,9 +142,9 @@ type hostOverview struct {
 
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	ctx, now := r.Context(), s.Now()
-	hosts, err := s.st.Hosts(ctx)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "内部错误")
+	var err error
+	_, _, _, hosts, scopeOK := s.scope(w, r)
+	if !scopeOK {
 		return
 	}
 	gp, ok := resolvePeriod(r, now, s.cfg.loc, s.cfg.ResetDay)
@@ -145,7 +165,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal([]byte(h.MetaJSON), &meta) == nil {
 			ho.Collectors, ho.Buffered, ho.Dropped, ho.Hostname = meta.Collectors, meta.Buffered, meta.Dropped, meta.Hostname
 		}
-		tbl := store.TableFor(p.From, now)
+		tbl := factTableFor(s.st, p, now)
 		ids := []int64{h.ID}
 		if ho.Ifaces, err = s.st.KindDim1Totals(ctx, tbl, ids, proto.KindIface, p.From, p.To); err != nil {
 			writeErr(w, http.StatusInternalServerError, "内部错误")
@@ -223,8 +243,43 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 	if f.Kind == "" {
 		f.Kind = proto.KindIface
 	}
+	if p.Label != "current" && p.Label != "previous" {
+		from, to, e := s.analysisPeriod(r, now)
+		if e != nil {
+			writeErr(w, 400, e.Error())
+			return
+		}
+		p.From, p.To = from, to
+		loc = s.cfg.loc
+	}
 	if f.Kind == proto.KindIface && f.Dim1 == "" {
-		f.Dim1 = "eth0"
+		_, _, _, hosts, _ := s.scope(w, r)
+		combined := map[int64]store.Pair{}
+		for _, h := range hosts {
+			if h.BillingIface == "" {
+				continue
+			}
+			hf := f
+			hf.Dim1 = h.BillingIface
+			points, e := s.series(r, []int64{h.ID}, hf, p, loc, now, q.Get("gran"))
+			if e != nil {
+				writeErr(w, 400, e.Error())
+				return
+			}
+			for _, pt := range points {
+				v := combined[pt.TS]
+				v.RX += pt.RX
+				v.TX += pt.TX
+				combined[pt.TS] = v
+			}
+		}
+		points := []store.Point{}
+		for ts, pair := range combined {
+			points = append(points, store.Point{TS: ts, Pair: pair})
+		}
+		sort.Slice(points, func(i, j int) bool { return points[i].TS < points[j].TS })
+		writeJSON(w, 200, map[string]any{"period": p, "points": points, "kind": f.Kind, "dim1": "billing"})
+		return
 	}
 	pts, err := s.series(r, ids, f, p, loc, now, q.Get("gran"))
 	if err != nil {
@@ -262,12 +317,10 @@ func (s *Server) topTable(p period, loc *time.Location, now time.Time) string {
 	if p.Label == "last1h" {
 		return "fact_minute"
 	}
-	if store.TableFor(p.From, now) == "fact_day" {
+	if s.st.TableFor(p.From, now) == "fact_day" {
 		return "fact_day"
 	}
-	if store.DayStart(p.From, loc) == p.From && store.DayStart(p.To, loc) == p.To {
-		return "fact_day"
-	}
+
 	return "fact_hour"
 }
 
@@ -312,7 +365,7 @@ func (s *Server) handleInbounds(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "周期参数无效")
 		return
 	}
-	tbl := store.TableFor(p.From, now)
+	tbl := s.st.TableFor(p.From, now)
 	if p.Label == "last1h" {
 		tbl = "fact_minute"
 	}

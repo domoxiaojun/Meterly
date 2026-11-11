@@ -1,11 +1,25 @@
 {
   "listen": "0.0.0.0:8787",
-  "db_path": "/data/trafficstat.db",
+  "db_path": "/data/meterly-v2.db",
   "panel_token_file": "/run/secrets/panel_token",
   "tz": "Asia/Singapore",
   "reset_day": 9,
   "offline_after_minutes": 5,
-  "trusted_proxies": ["172.30.87.3"],
-  "geo": { "dir": "/data/geo", "auto_update": true },
-  "retention": { "MinuteDays": 14, "HourDays": 400, "TopNHour": 50, "TopNDay": 200, "MinuteDetailHours": 25 }
+  "trusted_proxies": [
+    "172.30.87.3"
+  ],
+  "geo": {
+    "dir": "/data/geo",
+    "auto_update": true
+  },
+  "retention": {
+    "MinuteDays": 2,
+    "HourDays": 365,
+    "MinuteDetailHours": 48
+  },
+  "maintenance": {
+    "backups": true,
+    "keep": 7
+  },
+  "agent_url": "https://meterly.internal:8443"
 }
