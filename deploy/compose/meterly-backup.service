@@ -1,0 +1,16 @@
+# 宿主 oneshot:给 compose 中心做 SQLite 在线备份,并在卷内保留最近 14 份。
+# 安装:
+#   install -m 644 deploy/compose/meterly-backup.service deploy/compose/meterly-backup.timer /etc/systemd/system/
+#   systemctl enable --now meterly-backup.timer
+[Unit]
+Description=Meterly server 在线备份(docker compose)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/meterly/deploy/compose
+Environment=COMPOSE_PROJECT_NAME=meterly
+# scratch 镜像无 shell,备份写到卷 /data/backups;清理在宿主卷目录进行
+ExecStart=/bin/sh -c 'docker compose exec -T server /meterly-server backup -out /data/backups/ts-$(date +%%Y%%m%%d-%%H%%M%%S).db'
+ExecStartPost=/bin/sh -c 'dir=$(docker volume inspect meterly_meterly-data --format "{{.Mountpoint}}")/backups; ls -1t "$dir"/ts-*.db 2>/dev/null | tail -n +15 | xargs -r rm -f'

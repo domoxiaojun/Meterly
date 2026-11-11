@@ -1,0 +1,114 @@
+# Meterly 中心(docker compose,推荐方式)。在 deploy/compose/ 目录执行:
+#   cp .env.example .env && 编辑 .env
+#   mkdir -p secrets && ( umask 077; openssl rand -base64 32 > secrets/panel_token ) && sudo chown 65532:65532 secrets/panel_token
+#   docker compose build && docker compose up -d
+#   docker compose --profile caddy up -d        # 需要 TLS 反代时
+# 默认只把端口发布到宿主 127.0.0.1;要让 agent 推送,把 METERLY_BIND 改成宿主的 NetBird 地址(如 100.66.x.x),不要用 0.0.0.0。
+name: meterly
+
+services:
+  server:
+    image: ghcr.io/domoxiaojun/meterly-server:${METERLY_VERSION:-latest}
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+      args:
+        VERSION: ${METERLY_VERSION}
+        COMMIT: ${METERLY_COMMIT:-none}
+        DATE: ${METERLY_BUILD_DATE:-unknown}
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile: { soft: 4096, hard: 4096 }
+    environment:
+      TZ: ${METERLY_TZ:-Asia/Singapore}
+    volumes:
+      - meterly-data:/data
+    secrets:
+      - panel_token
+    ports:
+      # 宿主地址:端口 -> 容器 8787;默认仅本机
+      - "${METERLY_BIND:-127.0.0.1}:${METERLY_PORT:-8787}:8787"
+    healthcheck:
+      test: ["CMD", "/meterly-server", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "${METERLY_CPUS:-1.0}"
+          memory: ${METERLY_MEMORY:-512M}
+          pids: 128
+        reservations:
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      meterly:
+        ipv4_address: 172.30.87.2
+
+  # 可选:Caddy 反代(TLS 终结、面板/ingest 路径分离、面板来源 IP 白名单)。docker compose --profile caddy up -d
+  caddy:
+    image: caddy:${CADDY_VERSION:-2.10.2-alpine}
+    profiles: ["caddy"]
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      METERLY_DOMAIN: ${METERLY_DOMAIN:-meterly.internal}
+      METERLY_TLS: ${METERLY_TLS:-internal}
+      METERLY_PANEL_ALLOW: ${METERLY_PANEL_ALLOW:-127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "${METERLY_CADDY_BIND:-127.0.0.1}:${METERLY_CADDY_PORT:-8443}:443"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+          pids: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      meterly:
+        ipv4_address: 172.30.87.3   # 与 server.json 的 trusted_proxies 一致
+
+secrets:
+  panel_token:
+    file: ./secrets/panel_token   # 宿主上 chown 65532:65532 且 chmod 600(server 拒绝组/其他可读的口令文件)
+
+volumes:
+  meterly-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  meterly:
+    ipam:
+      config:
+        - subnet: 172.30.87.0/24   # 若与宿主已有网段冲突,同时修改这里、两个 ipv4_address 与 server.json 的 trusted_proxies

@@ -1,0 +1,15 @@
+# 构建上下文只需要 go.mod/go.sum、cmd、internal、web 与 deploy/compose/server.json
+.git
+build
+dist
+e2e
+docs
+tools
+*.db
+*.db-wal
+*.db-shm
+*.token
+*.secret
+**/secrets
+**/.env
+.github

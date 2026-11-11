@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race -count=1 ./...
+      - name: Build
+        run: go build ./...
+      - name: Agent install dry-run and migrate test
+        run: |
+          scripts/build.sh
+          scripts/install-agent.sh --center http://127.0.0.1:8787 --allow-http --dry-run --binary ./build/meterly-agent
+          scripts/install-agent_test.sh

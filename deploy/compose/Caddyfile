@@ -1,0 +1,47 @@
+# Meterly 反代(docker compose --profile caddy)。
+# METERLY_TLS=internal:Caddy 内置 CA 自签(内网/NetBird 推荐,不需要对公网开 80/443);
+# METERLY_TLS=邮箱:ACME 自动证书(需要域名解析到本机且公网可达 80/443 —— 属于开新端口,须先确认已开放 80/443 并完成域名解析)。
+{
+	admin off
+	persist_config off
+}
+
+{$METERLY_DOMAIN:meterly.internal} {
+	tls {$METERLY_TLS:internal}
+
+	# ingest:只允许 POST /api/v1/ingest,用 host token 鉴权(server 侧),不受面板白名单限制
+	@ingest {
+		method POST
+		path /api/v1/ingest
+	}
+	handle @ingest {
+		request_body {
+			max_size 10MB
+		}
+		reverse_proxy server:8787
+	}
+
+	# 健康检查可匿名访问
+	handle /healthz {
+		reverse_proxy server:8787
+	}
+
+	# 面板与查询 API:来源 IP 白名单(默认只允许内网 / NetBird 网段)
+	@panel_denied not remote_ip {$METERLY_PANEL_ALLOW:127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10}
+	handle @panel_denied {
+		respond "forbidden" 403
+	}
+	handle {
+		request_body {
+			max_size 34MB
+		}
+		encode zstd gzip
+		reverse_proxy server:8787
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	# 不配置 access log:避免请求头进入日志
+}

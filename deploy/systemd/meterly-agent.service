@@ -1,0 +1,50 @@
+# /etc/systemd/system/meterly-agent.service
+# 只出站、不监听任何端口;以 root 运行仅为读取 root 600 的 /etc/sing-box/config.json(文件属主读,不需要额外 capability)。
+[Unit]
+Description=Meterly agent(流量统计采集端)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/meterly-agent run -config /etc/meterly/agent.json
+Restart=always
+RestartSec=10
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=64M
+TasksMax=64
+
+# ---- 加固(真实主机上用 systemd-analyze security meterly-agent 复核)----
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=default
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+StateDirectory=meterly
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/meterly
+ReadOnlyPaths=/etc/meterly -/etc/sing-box
+# 站点日志 / 1Panel / x-ui 路径由 install-agent.sh 写入 drop-in meterly-agent.service.d/collectors.conf
+
+[Install]
+WantedBy=multi-user.target

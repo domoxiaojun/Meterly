@@ -1,0 +1,18 @@
+/dist/
+/build/
+/tmp/
+*.db
+*.db-wal
+*.db-shm
+*.token
+*.secret
+/e2e/
+/deploy/compose/.env
+/deploy/compose/secrets/
+# 运行时下载的 DB-IP 库;测试夹具在 internal/geo/testdata/ 内需要提交
+/data/geo/
+*.pem
+*.key
+.idea/
+.DS_Store
+*.swp

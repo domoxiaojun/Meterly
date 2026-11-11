@@ -1,0 +1,21 @@
+{
+  "server_url": "https://traffic.example.internal:8787",
+  "token_file": "/etc/meterly/agent.token",
+  "allow_http": false,
+  "state_dir": "/var/lib/meterly",
+  "interval": "60s",
+  "buffer_max_bytes": 268435456,
+  "collectors": {
+    "netdev": { "enabled": true, "interfaces": ["eth0", "wt0"] },
+    "singbox": { "enabled": true, "config_path": "/etc/sing-box/config.json", "poll_interval": "10s" },
+    "site": {
+      "enabled": true,
+      "sources": [
+        { "path": "/var/log/nginx/example.log", "site": "app.example.com", "format": "main" }
+      ],
+      "allow_dirs": ["/var/log/nginx", "/opt/1panel/www", "/opt/1panel/apps/openresty"]
+    },
+    "netbird": { "enabled": true, "command": "netbird", "wg_interface": "wt0", "timeout": "8s" },
+    "xray": { "enabled": false, "bin": "xray", "server": "127.0.0.1:62789", "timeout": "5s" }
+  }
+}
