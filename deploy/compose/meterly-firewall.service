@@ -1,0 +1,24 @@
+[Unit]
+Description=Meterly published-port source IP restrictions (INPUT + DOCKER-USER)
+# 拷到 /etc/systemd/system/ 后必须填写允许的 IP,再 enable。
+# 未填写 AGENT_ALLOW_IPS 时脚本不会改 ingest 规则;面板端口亦同(列表为空只会清除面板规则)。
+# 尽量在 docker 启动容器、发布端口之前写入规则,避免开机空窗。
+# 脚本会在 DOCKER-USER 尚不存在时建链并挂到 FORWARD,docker 随后会复用。
+DefaultDependencies=no
+Before=docker.service
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=INGEST_PORT=8443
+Environment=PANEL_PUBLIC_PORT=8444
+# 在本机 unit 或 drop-in 里填写,空格分隔。不要把真实 IP 提交到 git。
+# 多个 IP 必须加引号,否则 systemd 只会吃到第一个。
+# Environment="AGENT_ALLOW_IPS=203.0.113.10 198.51.100.20"
+# Environment="PANEL_ALLOW_IPS=203.0.113.30"
+ExecStart=/opt/meterly/deploy/compose/meterly-docker-user.sh
+
+[Install]
+WantedBy=multi-user.target

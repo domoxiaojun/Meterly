@@ -54,7 +54,7 @@ docker compose up -d
 docker compose --profile caddy up -d
 ```
 
-默认只把面板发布到宿主 `127.0.0.1:8787`。给 agent 推送时,把 `.env` 里的 `METERLY_BIND` 改成内网或 NetBird 地址,不要用 `0.0.0.0`。拉 GHCR 私有包需要先 `docker login ghcr.io`。
+默认只把面板发布到宿主 `127.0.0.1:8787`。给 agent 推送时,把 `.env` 里的 `METERLY_BIND` 改成内网或 NetBird 地址,不要用 `0.0.0.0`。若要让固定公网 IP 用 HTTPS 打开面板,见 `deploy/compose/README.md`「指定 IP 访问面板」(独立端口 + 防火墙白名单)。拉 GHCR 私有包需要先 `docker login ghcr.io`。
 
 ```bash
 # 登记一台主机,token 只在 stdout 出现这一次

@@ -77,12 +77,17 @@ services:
       METERLY_DOMAIN: ${METERLY_DOMAIN:-meterly.internal}
       METERLY_TLS: ${METERLY_TLS:-internal}
       METERLY_PANEL_ALLOW: ${METERLY_PANEL_ALLOW:-127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10}
+      METERLY_PANEL_ADDRESSES: ${METERLY_PANEL_ADDRESSES:-meterly.internal:8444}
+      METERLY_DEFAULT_SNI: ${METERLY_DEFAULT_SNI:-meterly.internal}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
     ports:
+      # ingest-only TLS:容器 443 → 宿主 8443(默认仅本机)
       - "${METERLY_CADDY_BIND:-127.0.0.1}:${METERLY_CADDY_PORT:-8443}:443"
+      # panel-only TLS:容器 8444 → 宿主 8444(默认仅本机)。对非回环发布前,先跑 meterly-docker-user.sh 写好 INPUT + DOCKER-USER。
+      - "${METERLY_PANEL_BIND:-127.0.0.1}:${METERLY_PANEL_PUBLIC_PORT:-8444}:8444"
     deploy:
       resources:
         limits:

@@ -43,18 +43,23 @@ del_by_comment() {
     iptables -t "$table" -D "$chain" "$num"
   done
 }
-# 新旧注释都清理
-for c in "meterly ingest" "trafficstat ingest"; do
-  del_by_comment filter INPUT "$c"
-done
-for c in "meterly 8443" "trafficstat 8443"; do
-  del_by_comment filter DOCKER-USER "$c"
+# 新旧注释都清理(ingest / 面板端口,INPUT 与 DOCKER-USER)
+for chain in INPUT DOCKER-USER; do
+  for c in "meterly ingest" "trafficstat ingest" "meterly 8443" "trafficstat 8443" "meterly 8444" "trafficstat 8444"; do
+    del_by_comment filter "$chain" "$c"
+  done
+  # 其它端口上带 meterly / trafficstat 注释的规则
+  while :; do
+    num=$(iptables -L "$chain" -n --line-numbers 2>/dev/null | awk '/meterly |trafficstat /{print $1; exit}')
+    [ -n "${num:-}" ] || break
+    iptables -D "$chain" "$num"
+  done
 done
 
 if [ "$PURGE" -eq 1 ]; then
   if [ -f /etc/iptables/rules.v4 ]; then
     tmp=$(mktemp)
-    grep -v -e 'meterly ingest' -e 'meterly 8443' -e 'trafficstat ingest' -e 'trafficstat 8443' /etc/iptables/rules.v4 > "$tmp"
+    grep -v -e 'meterly ingest' -e 'meterly 8443' -e 'meterly 8444' -e 'trafficstat ingest' -e 'trafficstat 8443' -e 'trafficstat 8444' /etc/iptables/rules.v4 > "$tmp"
     cat "$tmp" > /etc/iptables/rules.v4
     rm -f "$tmp"
   fi

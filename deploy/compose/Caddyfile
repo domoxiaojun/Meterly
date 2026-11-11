@@ -1,15 +1,21 @@
 # Meterly 反代(docker compose --profile caddy)。
 # METERLY_TLS=internal:Caddy 内置 CA 自签(内网/NetBird 推荐,不需要对公网开 80/443);
 # METERLY_TLS=邮箱:ACME 自动证书(需要域名解析到本机且公网可达 80/443 —— 属于开新端口,须先确认已开放 80/443 并完成域名解析)。
+#
+# 两个监听分开:容器 :443(宿主 METERLY_CADDY_PORT,默认 8443)只做 ingest;
+# 容器 :8444(宿主 METERLY_PANEL_PUBLIC_PORT,默认 8444)只做面板。
+# 若要把面板端口发布到非回环地址,须先用 meterly-docker-user.sh 写好 INPUT 与 DOCKER-USER 规则,再 compose up,避免出现空窗。
 {
 	admin off
 	persist_config off
+	# 用 IP 访问的客户端通常不带 SNI;回落到这个名字对应的证书(须出现在下方站点地址里)
+	default_sni {$METERLY_DEFAULT_SNI:meterly.internal}
 }
 
+# ingest-only(默认 https :443)
 {$METERLY_DOMAIN:meterly.internal} {
 	tls {$METERLY_TLS:internal}
 
-	# ingest:只允许 POST /api/v1/ingest,用 host token 鉴权(server 侧),不受面板白名单限制
 	@ingest {
 		method POST
 		path /api/v1/ingest
@@ -21,15 +27,41 @@
 		reverse_proxy server:8787
 	}
 
-	# 健康检查可匿名访问
 	handle /healthz {
 		reverse_proxy server:8787
 	}
 
-	# 面板与查询 API:来源 IP 白名单(默认只允许内网 / NetBird 网段)
+	# 此端口不提供面板
+	handle {
+		respond "forbidden" 403
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+}
+
+# panel-only(容器 :8444)
+{$METERLY_PANEL_ADDRESSES:meterly.internal:8444} {
+	tls {$METERLY_TLS:internal}
+
+	# 此端口不提供 ingest
+	@ingest {
+		method POST
+		path /api/v1/ingest
+	}
+	handle @ingest {
+		respond "forbidden" 403
+	}
+
 	@panel_denied not remote_ip {$METERLY_PANEL_ALLOW:127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10}
 	handle @panel_denied {
 		respond "forbidden" 403
+	}
+	handle /healthz {
+		reverse_proxy server:8787
 	}
 	handle {
 		request_body {
@@ -41,7 +73,9 @@
 
 	header {
 		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
 		-Server
 	}
-	# 不配置 access log:避免请求头进入日志
 }

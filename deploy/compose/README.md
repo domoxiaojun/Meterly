@@ -13,10 +13,12 @@
 | `Dockerfile` | 多阶段:`golang:1.27-alpine` 静态编译(`CGO_ENABLED=0`)→ `scratch`;uid 65532;内置 CA 证书与默认配置;`HEALTHCHECK` 用二进制自带的 `healthcheck` 子命令 |
 | `docker-compose.yml` | `server`(只读根、tmpfs `/tmp`、`cap_drop: ALL`、`no-new-privileges`、CPU/内存/进程数限制、json-file 日志轮转 10m×3、命名卷 `/data`)+ `caddy`(profile,可选) |
 | `server.json` | 容器内配置(打进镜像 `/etc/meterly/server.json`):监听 `0.0.0.0:8787`、数据 `/data`、面板口令 `/run/secrets/panel_token`、归属地 `/data/geo` |
-| `Caddyfile` | TLS(内置 CA 自签或 ACME)、`POST /api/v1/ingest` 与面板路径分离、面板来源 IP 白名单 |
-| `.env.example` | 版本号、发布地址、资源限制、Caddy 参数;**不含任何 secret** |
+| `Caddyfile` | TLS(内置 CA 自签或 ACME);宿主 ingest 端口只反代 `POST /api/v1/ingest`,面板端口只反代面板;面板另有来源 IP 白名单 |
+| `.env.example` | 版本号、发布地址、资源限制、Caddy 参数、可选面板端口;**不含任何 secret** |
+| `meterly-docker-user.sh` | 为宿主 ingest/面板端口写入 INPUT 与 DOCKER-USER 来源 IP 限制 |
+| `meterly-firewall.service` | 开机(在 docker 发布端口前)套用上述规则的 systemd 模板,拷走后填写 IP |
 
-端口:server 容器内监听 `0.0.0.0:8787`,compose 只发布到宿主 `${METERLY_BIND:-127.0.0.1}`。默认不对公网暴露,也不新增对外端口。
+端口:server 容器内监听 `0.0.0.0:8787`,compose 只发布到宿主 `${METERLY_BIND:-127.0.0.1}`。启用 Caddy 时再发布两个默认只绑本机的端口:ingest(`METERLY_CADDY_PORT`,默认 8443)和面板(`METERLY_PANEL_PUBLIC_PORT`,默认 8444)。默认不对公网暴露。
 
 ## 首次部署
 ```bash
@@ -45,6 +47,46 @@ docker compose logs -f server             # 首次启动会下载 DB-IP 归属�
    # "server_url": "https://meterly.internal:8443"(agent 主机需能把该名字解析到中心 NetBird 地址)
    ```
    `METERLY_TLS=邮箱` 走 ACME 公网证书,需要公网 80/443 —— 属于开新端口,须先确认已开放 80/443 并完成域名解析。
+
+
+### 指定 IP 访问面板(可选)
+
+默认面板只在宿主回环地址:`http://127.0.0.1:8787`(或经 SSH 隧道)。若要让某几个固定公网 IP 直接用 HTTPS 打开面板,用 Caddy 的面板专用端口,不要把 ingest 端口或 `0.0.0.0:8787` 暴露出去。
+
+1. 在 `.env` 里设置(把地址和 IP 换成你的,不要提交真实值):
+   ```bash
+   METERLY_PANEL_BIND=192.0.2.10          # 宿主要发布的地址,尽量不要用 0.0.0.0
+   METERLY_PANEL_PUBLIC_PORT=8444         # 选一个空闲端口;不要占用 80/443
+   # 若证书要带上访问时用的名字或 IP,把它们写进站点地址(均须带 :端口)
+   METERLY_PANEL_ADDRESSES=meterly.internal:8444, 192.0.2.10:8444
+   # 用 IP 访问时客户端通常不带 SNI,须与上面某一个站点名/IP 一致
+   METERLY_DEFAULT_SNI=192.0.2.10
+   # Caddy 层白名单也要包含客户端公网 IP(与防火墙列表可以相同,或再加内网网段)
+   METERLY_PANEL_ALLOW=127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 203.0.113.30
+   ```
+2. **先写防火墙,再发布端口**(Docker 发布的端口会绕过 INPUT,两条链都要写,且必须在端口开始监听之前生效):
+   ```bash
+   # ingest 端口已在跑的话,把原有 AGENT_ALLOW_IPS 一并带上,避免重跑时漏掉
+   sudo AGENT_ALLOW_IPS="203.0.113.10 198.51.100.20" INGEST_PORT=8443 \
+        PANEL_ALLOW_IPS="203.0.113.30" PANEL_PUBLIC_PORT=8444 \
+        ./meterly-docker-user.sh
+   sudo cp meterly-firewall.service /etc/systemd/system/
+   # 编辑该 unit,填入同样的允许列表;多个 IP 必须写成 Environment="AGENT_ALLOW_IPS=... ..."(加引号,否则 systemd 只保留第一个)
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now meterly-firewall.service
+   ```
+3. 然后再启动或重建 Caddy:`docker compose --profile caddy up -d caddy`。
+4. 客户端浏览器打开 `https://<METERLY_PANEL_BIND>:<METERLY_PANEL_PUBLIC_PORT>/`。面板口令仍然有效,不要改 token。
+
+`METERLY_TLS=internal` 时证书由 Caddy 内置 CA 签发。浏览器会提示证书不受信任;把 CA 根证书加到系统或浏览器信任区后即可消除警告(若 `METERLY_PANEL_ADDRESSES` 里包含访问用的名字或 IP,也不会再报名称不匹配):
+
+```bash
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+```
+
+以后若改用公网域名和 Let's Encrypt,把 `METERLY_TLS` 设为邮箱并完成域名解析即可,不需要再手工信任根证书。不要为此新开 80/443,除非你已经确认这两端口可以给 Caddy 使用。
+
+回滚:把 `METERLY_PANEL_BIND` 改回 `127.0.0.1`(或去掉面板端口映射),`docker compose --profile caddy up -d caddy`,再执行 `sudo PANEL_PUBLIC_PORT=8444 PANEL_ALLOW_IPS= ./meterly-docker-user.sh` 清掉面板端口规则。ingest 规则不受影响。
 
 ### 主机与 token
 ```bash
@@ -101,7 +143,7 @@ docker compose ps && docker compose exec server /meterly-server version
 - 面板口令走 compose `secrets`(文件挂载),不进环境变量、不进 `docker inspect`。
 - 容器:uid 65532、只读根、`cap_drop: ALL`、`no-new-privileges`、进程 umask 077;scratch 镜像无 shell。
 - 日志不含 token / 口令 / 请求体;Caddy 未开启 access log。
-- 面板与 ingest 鉴权分离;经 Caddy 时面板额外受来源 IP 白名单限制,ingest 只放行 `POST /api/v1/ingest`。
+- 面板与 ingest 鉴权分离;经 Caddy 时分端口:ingest 端口只放行 `POST /api/v1/ingest`,面板端口只反代面板(另有来源 IP 白名单)。把面板端口发到非回环地址前,须先用 `meterly-docker-user.sh` 写好 INPUT 与 DOCKER-USER。
 - 修改类接口只接受 `application/json`,会话 Cookie `SameSite=Strict`(防 CSRF)。
 
 ## 验证清单
@@ -117,16 +159,17 @@ docker compose ps && docker compose exec server /meterly-server version
 | 5 | HEALTHCHECK | `docker inspect --format '{{json .State.Health}}' meterly-server-1` 最近几次 ExitCode 0 |
 | 6 | 只读根 | `docker compose exec server /meterly-server backup -out /x.db` 应失败(只读);`-out /data/backups/t.db` 成功 |
 | 7 | 用户与能力 | `docker inspect` 中 `User=65532:65532`、`ReadonlyRootfs=true`、`CapDrop=[ALL]`、`SecurityOpt` 含 `no-new-privileges` |
-| 8 | 端口 | 宿主 `ss -ltnp` 只有 `127.0.0.1:8787`(或设定的 NetBird 地址),**没有** `0.0.0.0:8787` |
+| 8 | 端口 | 宿主 `ss -ltnp` 上 `8787` 只绑 `127.0.0.1`(或设定的 NetBird 地址),**没有** `0.0.0.0:8787`;Caddy 的 8443/8444 默认也只绑 `127.0.0.1` |
 | 9 | 鉴权 | `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/api/v1/overview` = 401;`/healthz` = 200 |
-| 10 | 面板 | 浏览器经 SSH 隧道 / NetBird 打开面板,口令登录正常,页脚有 DB-IP 署名 |
+| 10 | 面板 | 浏览器经 SSH 隧道 / NetBird(或已放行的面板端口)打开面板,口令登录正常,页脚有 DB-IP 署名 |
 | 11 | 归属地下载 | 日志有「归属地库已更新」;`/data/geo/*.mmdb` 存在(若主机无外网:日志告警,服务仍 healthy) |
 | 12 | ingest | `host add` 一台测试主机,agent(或 `demoseed`)推送后面板出现数据 |
 | 13 | 重启保留 | `docker compose restart server` 与 `docker compose down && docker compose up -d` 后数据、主机、归属地库都在,且不重复下载 |
 | 14 | 资源 | `docker stats --no-stream` 内存 < 100 MB(限制 512M);日志文件轮转配置生效(`docker inspect` LogConfig) |
 | 15 | 备份恢复 | 按「备份与恢复」做一遍,恢复后数据一致 |
 | 16 | 升级 | 改 `METERLY_VERSION` 重建,`up -d` 后数据保留,`version` 显示新版本 |
-| 17 | Caddy(可选) | `--profile caddy up -d`;`curl --cacert caddy-root.crt https://meterly.internal:8443/healthz`(`--resolve` 指到绑定地址)= ok;非白名单来源访问面板 403;`POST /api/v1/ingest` 可达;`GET /api/v1/ingest` 走面板分支 |
+| 17 | Caddy(可选) | `--profile caddy up -d`;`curl --cacert caddy-root.crt https://meterly.internal:8443/healthz`(`--resolve` 指到 ingest 绑定地址)= ok;`POST /api/v1/ingest` 可达;ingest 端口上访问面板或 `GET /api/v1/ingest` 返回 403;面板端口 `https://meterly.internal:8444/` 为面板 HTML,`/api/v1/overview` 无口令时 401,`POST /api/v1/ingest` 为 403;非白名单来源访问面板 403 |
 | 18 | Caddy 证书 | `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .` 成功;重启后证书不变(caddy-data 卷持久) |
 | 19 | trusted_proxies | 经 Caddy 访问时 server 日志里的 `ip` 是真实来源 IP 而不是 172.30.87.3 |
 | 20 | 网段冲突 | `172.30.87.0/24` 不与宿主现有网络冲突(`ip route`);冲突时按 compose 注释同时改 3 处 |
+| 21 | 面板公网端口(可选) | 先 `meterly-docker-user.sh` 再 `up -d caddy`;未放行来源对面板端口应超时;放行来源可打开面板;ingest 端口限制不变 |

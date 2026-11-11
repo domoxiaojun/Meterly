@@ -19,7 +19,8 @@ cp -r deploy/compose/. "$tmp/" && cp deploy/compose/.env.example "$tmp/.env" && 
 if [ -n "$COMPOSE" ]; then
   (cd "$tmp" && "$COMPOSE" config -q) && ok "compose config(默认)" || bad "compose config(默认)"
   (cd "$tmp" && "$COMPOSE" --profile caddy config -q) && ok "compose config(--profile caddy)" || bad "compose config(caddy)"
-  (cd "$tmp" && "$COMPOSE" --profile caddy config | grep -q 'host_ip: 127.0.0.1') && ok "端口默认只发布到 127.0.0.1" || bad "端口发布地址"
+  n=$(cd "$tmp" && "$COMPOSE" --profile caddy config | grep -c 'host_ip: 127.0.0.1' || true)
+  [ "$n" -ge 3 ] && ok "端口默认只发布到 127.0.0.1(含 ingest/面板)" || bad "端口发布地址(got $n)"
   (cd "$tmp" && rm .env && "$COMPOSE" config -q) && ok "缺少 METERLY_VERSION 时默认 latest" || bad "缺省 latest 渲染"
 else skip "未找到 docker-compose"; fi
 if python3 -c 'import yaml' 2>/dev/null; then
@@ -43,7 +44,7 @@ grep -q '^FROM scratch' deploy/compose/Dockerfile && grep -q '^USER 65532' deplo
 
 echo "[Caddyfile]"
 if [ -n "$CADDY" ]; then
-  METERLY_DOMAIN=meterly.internal METERLY_TLS=internal "$CADDY" validate --config deploy/compose/Caddyfile --adapter caddyfile >/dev/null 2>&1 && ok "caddy validate" || bad "caddy validate"
+  METERLY_DOMAIN=meterly.internal METERLY_TLS=internal METERLY_PANEL_ADDRESSES=meterly.internal:8444 "$CADDY" validate --config deploy/compose/Caddyfile --adapter caddyfile >/dev/null 2>&1 && ok "caddy validate" || bad "caddy validate"
   "$CADDY" fmt deploy/compose/Caddyfile | diff -q - deploy/compose/Caddyfile >/dev/null && ok "caddy fmt 已格式化" || bad "caddy fmt"
 else skip "caddy"; fi
 
