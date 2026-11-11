@@ -42,17 +42,17 @@ chmod 600 "$tmp/token"
 installer="$tmp/standalone/install-agent.sh"
 # standalone: only the installer exists locally; all units come from the verified bundle.
 "$installer" --center https://fixture.invalid --token-file "$tmp/token" --version v2.0.0 > "$tmp/first.log"
-rg -q "已安装 v2.0.0" "$tmp/first.log"
+grep -q "已安装 v2.0.0" "$tmp/first.log"
 test -f "$METERLY_ROOT/etc/systemd/system/meterly-agent-updater.service"
 test -f "$METERLY_ROOT/etc/systemd/system/meterly-agent.service"
-"$METERLY_ROOT/usr/local/bin/meterly-agent" version | rg -q 'v2.0.0'
+"$METERLY_ROOT/usr/local/bin/meterly-agent" version | grep -q 'v2.0.0'
 # Preserve user overrides, original token, and config during an explicit-version update.
 node - "$METERLY_ROOT/etc/meterly/agent.json" <<'JS'
 const fs=require('fs'),p=process.argv[2],c=JSON.parse(fs.readFileSync(p));c.overrides={collectors:{site:false}};fs.writeFileSync(p,JSON.stringify(c));
 JS
 before=$(shasum -a 256 "$METERLY_ROOT/etc/meterly/agent.token")
 "$installer" --center https://fixture.invalid --version v2.0.1 > "$tmp/second.log"
-"$METERLY_ROOT/usr/local/bin/meterly-agent" version | rg -q 'v2.0.1'
+"$METERLY_ROOT/usr/local/bin/meterly-agent" version | grep -q 'v2.0.1'
 test "$before" = "$(shasum -a 256 "$METERLY_ROOT/etc/meterly/agent.token")"
 node - "$METERLY_ROOT/etc/meterly/agent.json" <<'JS'
 const fs=require('fs');if(JSON.parse(fs.readFileSync(process.argv[2])).overrides.collectors.site!==false)process.exit(1);
