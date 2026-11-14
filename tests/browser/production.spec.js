@@ -81,6 +81,20 @@ test('production rankings support drill-down, pagination, search and CSV', async
   await expect(page.locator('.table-footer')).toContainText('共 1 条结果');
 });
 
+test('production IP list and details display province and city', async ({ page }) => {
+  const location = '中国 · Guangdong · Shenzhen';
+  await login(page, '/#/ips?period=day&start=2026-11-10');
+  await expect(page.locator('tbody .table-identity').first()).toContainText(location);
+  await page.goto('/#/ips/198.51.100.7?period=day&start=2026-11-10');
+  await expect(page.locator('.ip-profile')).toContainText(location);
+  await page.getByRole('button', { name: '代理载荷', exact: true }).click();
+  await expect(page.locator('.ip-profile')).toContainText(location);
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.locator('.ip-profile').getByText(location, { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.screenshot({ path: 'test-results/ip-province-city-mobile.png', fullPage: true });
+});
+
 test('expired sessions clear private data and restore the requested page after login', async ({ page, context }) => {
   await login(page, '/#/hosts');
   await expect(page.locator('.host-card')).toHaveCount(3);

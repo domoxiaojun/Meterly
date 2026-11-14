@@ -7,6 +7,10 @@ export function bytes(value: number | null | undefined): string {
   return `${scaled.toLocaleString('en-US', { maximumFractionDigits: index ? 2 : 0 })} ${units[index]}`
 }
 export const number = (n: number | undefined) => n == null || n >= 2 ** 62 - 1 ? '—' : n.toLocaleString('en-US')
+export function locationText(row: { country_name?: string; region?: string; city?: string; scope?: string }) {
+  if (row.scope) return `${row.scope}地址`
+  return [...new Set([row.country_name, row.region, row.city].filter(Boolean))].join(' · ') || '暂无归属地'
+}
 export function compact(n: number) { return n >= 10_000 ? `${(n / 10_000).toLocaleString('en-US', { maximumFractionDigits: 2 })} 万` : number(n) }
 export function dateLabel(ts: number, time = false, tz = 'Asia/Singapore') { return new Intl.DateTimeFormat('zh-CN', { timeZone: tz, month: '2-digit', day: '2-digit', ...(time ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}) }).format(ts * 1000) }
 
