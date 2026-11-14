@@ -22,6 +22,7 @@ type AnalysisFilter struct {
 	Table                             string
 }
 type Metrics struct {
+	Overflow      bool    `json:"overflow"`
 	RX            int64   `json:"rx"`
 	TX            int64   `json:"tx"`
 	Total         int64   `json:"total"`
@@ -38,6 +39,9 @@ type AnalysisRow struct {
 	Key         string `json:"key"`
 	Country     string `json:"country"`
 	CountryName string `json:"country_name"`
+	Region      string `json:"region"`
+	City        string `json:"city"`
+	Scope       string `json:"scope"`
 	ASN         uint   `json:"asn"`
 	Org         string `json:"org"`
 	Special     bool   `json:"special"`
@@ -116,7 +120,7 @@ func analysisSQL(f AnalysisFilter) (from, where, group, fields string, args []an
 	if err = ValidateAnalysis(f); err != nil {
 		return
 	}
-	fields = `COALESCE(SUM(f.rx),0),COALESCE(SUM(f.tx),0),0,0,COUNT(DISTINCT CASE WHEN i.family>0 THEN i.id END),0,COUNT(DISTINCT f.host_id),1`
+	fields = `COALESCE(metric_sum(f.rx),0),COALESCE(metric_sum(f.tx),0),0,0,COUNT(DISTINCT CASE WHEN i.family>0 THEN i.id END),0,COUNT(DISTINCT f.host_id),1`
 	if f.Source == "site" {
 		from = `site_` + f.Table + ` f JOIN hosts h ON h.id=f.host_id `
 		if f.Table == "day" {
@@ -124,7 +128,7 @@ func analysisSQL(f AnalysisFilter) (from, where, group, fields string, args []an
 		} else {
 			from += `JOIN ips i ON i.id=f.ip_id `
 		}
-		fields = `COALESCE(SUM(f.rx),0),COALESCE(SUM(f.tx),0),COALESCE(SUM(f.requests),0),COALESCE(SUM(CASE WHEN f.status>=400 THEN f.requests ELSE 0 END),0),COUNT(DISTINCT CASE WHEN i.family>0 THEN i.id END),COUNT(DISTINCT f.site),COUNT(DISTINCT f.host_id),COALESCE(MIN(f.rx_known),0)`
+		fields = `COALESCE(metric_sum(f.rx),0),COALESCE(metric_sum(f.tx),0),COALESCE(metric_sum(f.requests),0),COALESCE(metric_sum(CASE WHEN f.status>=400 THEN f.requests ELSE 0 END),0),COUNT(DISTINCT CASE WHEN i.family>0 THEN i.id END),COUNT(DISTINCT f.site),COUNT(DISTINCT f.host_id),COALESCE(MIN(f.rx_known),0)`
 	} else {
 		from = `fact_` + f.Table + ` f JOIN hosts h ON h.id=f.host_id LEFT JOIN ips i ON i.address=f.dim1 `
 	}
@@ -197,9 +201,10 @@ func metricScan(m *Metrics) []any {
 	return []any{&m.RX, &m.TX, &m.Requests, &m.Errors, &m.IPs, &m.Sites, &m.Hosts, &m.RXKnown}
 }
 func finishMetrics(m *Metrics, source string) {
-	m.Total = m.RX + m.TX
+	m.Total = AddMetric(m.RX, m.TX)
+	m.Overflow = m.Total >= MetricLimit || m.Requests >= MetricLimit || m.Errors >= MetricLimit
 	m.RequestsKnown = source == "site"
-	if m.Requests > 0 {
+	if m.Requests > 0 && !m.Overflow {
 		m.ErrorRate = float64(m.Errors) * 100 / float64(m.Requests)
 	}
 }
@@ -213,10 +218,10 @@ func rankSQL(f AnalysisFilter, limited bool) (string, []any, error) {
 		geo = `COALESCE(MAX(i.country),''),COALESCE(MAX(i.country_name),''),COALESCE(MAX(i.asn),0),COALESCE(MAX(i.org),'')`
 	}
 	q := `SELECT COALESCE(` + group + `,''),` + geo + `,` + fields + ` FROM ` + from + ` WHERE ` + where + ` GROUP BY ` + group
-	sortExpr := map[string]string{"total": "SUM(f.rx)+SUM(f.tx)", "rx": "SUM(f.rx)", "tx": "SUM(f.tx)", "key": group}
+	sortExpr := map[string]string{"total": "metric_sum(f.rx)+metric_sum(f.tx)", "rx": "metric_sum(f.rx)", "tx": "metric_sum(f.tx)", "key": group}
 	if f.Source == "site" {
-		sortExpr["requests"] = "SUM(f.requests)"
-		sortExpr["error_rate"] = "1.0*SUM(CASE WHEN f.status>=400 THEN f.requests ELSE 0 END)/MAX(SUM(f.requests),1)"
+		sortExpr["requests"] = "metric_sum(f.requests)"
+		sortExpr["error_rate"] = "1.0*metric_sum(CASE WHEN f.status>=400 THEN f.requests ELSE 0 END)/MAX(metric_sum(f.requests),1)"
 	}
 	order := sortExpr[f.Sort]
 	if order == "" {

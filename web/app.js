@@ -3,38 +3,32 @@ import {parseRoute,navigate,update,startRouter} from './modules/router.js';
 import {esc,clearCharts,toast,bytes} from './modules/components.js';
 import {overview,sites,ips} from './modules/analytics-views.js';
 import {hosts,billing,system} from './modules/manage-views.js';
+import {syncFilters,syncFilterOptions} from './modules/filters.js';
 
 let options={hosts:[],sites:[],tz:'Asia/Singapore'},controller,currentMeta,refreshTimer;
-const page=document.getElementById('page'),filters=document.getElementById('filters');
-function today(tz){const p=new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const get=t=>p.find(v=>v.type===t).value;return `${get('year')}-${get('month')}-${get('day')}`;}
-function filterUI(state){
- filters.elements.host.innerHTML='<option value="all">全部主机</option>'+options.hosts.map(h=>`<option value="${esc(h.name)}">${esc(h.name)}</option>`).join('');
- for(const k of ['period','host','gran'])filters.elements[k].value=state[k];
- filters.elements.start.value=state.start||today(options.tz);filters.elements.end.value=state.end||filters.elements.start.value;
- document.getElementById('startLabel').hidden=!['custom','day'].includes(state.period);document.getElementById('endLabel').hidden=state.period!=='custom';
- document.getElementById('timezone').textContent=options.tz;
-}
-function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(!document.hidden&&!page.contains(document.activeElement)&&!document.getElementById('installGuide')?.textContent)render();else scheduleRefresh();},30000);}
+const page=document.getElementById('page');
+let renderedPath='';
+function scheduleRefresh(){clearTimeout(refreshTimer);refreshTimer=setTimeout(()=>{if(!document.hidden&&!document.activeElement.closest('form')&&!document.getElementById('installGuide')?.textContent)render();else scheduleRefresh();},30000);}
 function showLogin(){document.getElementById('login').hidden=false;document.getElementById('loginToken').focus();}
 async function render(route= parseRoute(location.hash),scroll=null){
  scroll ??= window.scrollY;
  controller?.abort();controller=new AbortController();const signal=controller.signal;currentMeta=null;clearTimeout(refreshTimer);
- page.setAttribute('aria-busy','true');page.innerHTML='<div class="loading"><span></span><p>正在读取当前范围的数据…</p></div>';
+ syncFilters(route,options);
+ page.setAttribute('aria-busy','true');document.getElementById('freshness').textContent='正在更新…';
+ if(renderedPath!==route.path||!page.hasChildNodes())page.innerHTML='<div class="loading"><span></span><p>正在读取当前范围的数据…</p></div>';
  try{
   const me=await api('/me',{signal});document.getElementById('version').textContent=`Meterly ${me.version}`;document.getElementById('logout').hidden=!me.auth;
-  options=await api('/analytics/options',{signal});if(signal.aborted)return;filterUI(route.state);
+  options=await api('/analytics/options',{signal});if(signal.aborted)return;syncFilterOptions(options);
   const section=route.path.split('/')[1]||'overview';const views={overview,sites,ips,hosts,billing,system};if(!views[section])throw new Error('页面不存在');
   document.querySelectorAll('[data-nav]').forEach(a=>{const active=a.dataset.nav===section;a.classList.toggle('active',active);if(active)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
   const result=await views[section]({...route,signal,options});if(signal.aborted)return;
   clearCharts();document.getElementById('pageTitle').textContent=result.title;document.title=`${result.title} · Meterly`;document.getElementById('pageSubtitle').textContent=result.subtitle;
-  page.innerHTML=result.html;page.removeAttribute('aria-busy');result.afterRender?.();currentMeta=result.meta;
+  page.innerHTML=result.html;renderedPath=route.path;page.removeAttribute('aria-busy');result.afterRender?.();currentMeta=result.meta;
   document.getElementById('freshness').textContent=`更新于 ${new Date().toLocaleTimeString('zh-CN',{timeZone:options.tz,hour12:false})}`;
   if(scroll!==null)window.scrollTo(0,scroll);
-  if(result.meta?.live||['hosts','system'].includes(section))refreshTimer=setTimeout(()=>{if(!document.hidden&&!page.contains(document.activeElement)&&!document.getElementById('installGuide')?.textContent)render(parseRoute(location.hash));else scheduleRefresh();},30000);
- }catch(e){if(signal.aborted||e.name==='AbortError')return;page.removeAttribute('aria-busy');if(e instanceof APIError&&e.status===401){showLogin();page.innerHTML='';return;}page.innerHTML=`<section class="panel error-state"><h2>暂时无法显示数据</h2><p>${esc(e.message)}</p><button class="button" data-retry>重试</button></section>`;}
+  if(result.meta?.live||['hosts','system'].includes(section))refreshTimer=setTimeout(()=>{if(!document.hidden&&!document.activeElement.closest('form')&&!document.getElementById('installGuide')?.textContent)render(parseRoute(location.hash));else scheduleRefresh();},30000);
+ }catch(e){if(signal.aborted||e.name==='AbortError')return;page.removeAttribute('aria-busy');document.getElementById('freshness').textContent='更新失败';if(e instanceof APIError&&e.status===401){showLogin();page.innerHTML='';return;}page.innerHTML=`<section class="panel error-state"><h2>暂时无法显示数据</h2><p>${esc(e.message)}</p><button class="button" data-retry>重试</button></section>`;}
 }
-filters.elements.period.addEventListener('change',()=>{const p=filters.elements.period.value;document.getElementById('startLabel').hidden=!['day','custom'].includes(p);document.getElementById('endLabel').hidden=p!=='custom';});
-filters.addEventListener('submit',e=>{e.preventDefault();const values=Object.fromEntries(new FormData(filters));if(!['day','custom'].includes(values.period)){values.start='';values.end='';}if(values.period==='day')values.end=values.start;update({...values,from:'',to:'',page:1});});
 document.getElementById('refresh').addEventListener('click',()=>render());
 document.getElementById('loginForm').addEventListener('submit',async e=>{
  e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;document.getElementById('loginError').textContent='';
@@ -48,12 +42,11 @@ document.addEventListener('click',e=>{
  if(e.target.closest('.skip-link')){e.preventDefault();document.getElementById('content').focus();return;}
  const nav=e.target.closest('[data-nav]');if(nav){e.preventDefault();navigate('/'+nav.dataset.nav,{search:'',ip:'',site:'',status:'',country:'',asn:'',page:1,source:'site',sort:'total'});return;}
  const sort=e.target.closest('[data-sort]');if(sort){const s=parseRoute(location.hash).state;update({sort:sort.dataset.sort,order:s.sort===sort.dataset.sort&&s.order==='desc'?'asc':'desc',page:1});return;}
- const clear=e.target.closest('[data-clear-filters]');if(clear){update({ip:'',country:'',asn:'',status:'',search:'',page:1});return;}
  if(e.target.closest('[data-retry]')){render();return;}
  const job=e.target.closest('[data-job]');if(job)act(job,async()=>{await api('/system/jobs/'+job.dataset.job,{method:'POST',body:{}});toast('任务已提交，可在维护记录查看结果');setTimeout(()=>render(),500);});
 });
 document.addEventListener('submit',e=>{
- const form=e.target;if(form.matches('[data-advanced]')){e.preventDefault();const fields=Object.fromEntries(new FormData(form));if(fields.source==='singbox')fields.status='';update({...fields,page:1});return;}
+ const form=e.target;
  if(!form.matches('[data-config-host],[data-host-settings],[data-upgrade-host],[data-provider-host],#enrollment'))return;e.preventDefault();const b=form.querySelector('button[type=submit],button'),f=new FormData(form);
  act(b,async()=>{
   if(form.dataset.configHost){const collectors={};for(const k of ['netdev','site','singbox','netbird','xray']){const v=f.get('collector_'+k);if(v!=='auto')collectors[k]=v==='true';}

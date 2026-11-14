@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -11,15 +12,19 @@ import (
 	"github.com/domoxiaojun/Meterly/internal/store"
 )
 
-func hostAlerts(h *store.Host, now time.Time) []map[string]any {
+func (s *Server) hostOnline(h *store.Host, now time.Time) bool {
+	return h.LastSeen > 0 && now.Unix()-h.LastSeen < int64(s.cfg.OfflineAfter)*60
+}
+
+func (s *Server) hostAlerts(h *store.Host, now time.Time) []map[string]any {
 	out := []map[string]any{}
 	add := func(kind, msg string) {
 		out = append(out, map[string]any{"host": h.Name, "kind": kind, "message": msg})
 	}
 	if h.LastSeen == 0 {
 		add("pending", "尚未上报")
-	} else if now.Unix()-h.LastSeen > 300 {
-		add("offline", "主机离线超过 5 分钟")
+	} else if !s.hostOnline(h, now) {
+		add("offline", fmt.Sprintf("主机离线达到 %d 分钟", s.cfg.OfflineAfter))
 	}
 	var m proto.Meta
 	_ = json.Unmarshal([]byte(h.MetaJSON), &m)
@@ -54,7 +59,7 @@ func (s *Server) handleHostList(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, "读取配置失败")
 			return
 		}
-		out = append(out, map[string]any{"host": h, "meta": m, "desired": c, "alerts": hostAlerts(h, s.Now())})
+		out = append(out, map[string]any{"host": h, "meta": m, "desired": c, "online": s.hostOnline(h, s.Now()), "alerts": s.hostAlerts(h, s.Now())})
 	}
 	writeJSON(w, 200, map[string]any{"hosts": out})
 }
@@ -160,7 +165,7 @@ func (s *Server) handleAgentControl(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "读取配置失败")
 		return
 	}
-	u, e := s.st.NextUpgrade(r.Context(), h.ID)
+	u, e := s.st.NextUpgrade(r.Context(), h.ID, s.Now())
 	if e != nil {
 		writeErr(w, 500, "读取任务失败")
 		return
@@ -219,6 +224,10 @@ func (s *Server) handleUpgradeCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, map[string]any{"id": id, "status": "pending"})
 }
 func (s *Server) handleUpgradeList(w http.ResponseWriter, r *http.Request) {
+	if e := s.st.ExpireUpgrades(r.Context(), s.Now()); e != nil {
+		writeErr(w, 500, "更新任务状态失败")
+		return
+	}
 	rows, e := s.st.R.QueryContext(r.Context(), `SELECT u.id,h.name,u.version,u.status,u.message,u.created_at,u.updated_at FROM upgrade_tasks u JOIN hosts h ON h.id=u.host_id ORDER BY u.id DESC LIMIT 100`)
 	if e != nil {
 		writeErr(w, 500, "读取任务失败")

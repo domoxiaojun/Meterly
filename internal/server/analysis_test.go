@@ -9,9 +9,70 @@ import (
 	"testing"
 	"time"
 
+	"github.com/domoxiaojun/Meterly/internal/geo"
 	"github.com/domoxiaojun/Meterly/internal/proto"
 	"github.com/domoxiaojun/Meterly/internal/store"
 )
+
+func TestAnalysisGeographyAndDetail(t *testing.T) {
+	s, st, _, tok := setup(t, "127.0.0.1:8787")
+	s.geo.Close()
+	s.geo = geo.Open("../geo/testdata")
+	t.Cleanup(s.Close)
+	ctx := context.Background()
+	host, _ := st.HostByToken(ctx, tok)
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, s.cfg.loc)
+	s.Now = func() time.Time { return now }
+	start := now.Add(-24 * time.Hour).Unix()
+	records := []proto.Record{
+		{Seq: 1, TS: start, Kind: "site", Dim1: "a.test", Dim2: "198.51.100.7", TX: 4000, Site: &proto.SiteMetrics{Status: 200, Requests: 4}},
+		{Seq: 2, TS: start + 60, Kind: "site", Dim1: "b.test", Dim2: "198.51.100.7", TX: 6000, Site: &proto.SiteMetrics{Status: 503, Requests: 2}},
+		{Seq: 3, TS: start, Kind: "site", Dim1: "a.test", Dim2: "2001:db8::1", TX: 2000, Site: &proto.SiteMetrics{Status: 200, Requests: 1}},
+		{Seq: 4, TS: start, Kind: "site", Dim1: "a.test", Dim2: "10.1.2.3", TX: 1000, Site: &proto.SiteMetrics{Status: 200, Requests: 1}},
+	}
+	if _, err := st.Ingest(ctx, host, time.UTC, proto.Meta{InstanceID: "geo-detail", Protocol: 2}, records, "", now); err != nil {
+		t.Fatal(err)
+	}
+	q := "?period=yesterday&group=ip"
+	w := do(s.Handler(), "GET", "/api/v2/analytics/rank"+q, panelTok, nil)
+	var data struct {
+		Rows   []store.AnalysisRow
+		Totals store.Metrics
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &data) != nil {
+		t.Fatal(w.Code, w.Body)
+	}
+	if len(data.Rows) != 3 {
+		t.Fatal(data.Rows)
+	}
+	if row := data.Rows[0]; row.CountryName != "中国" || row.Region != "Guangdong" || row.City != "Shenzhen" || row.ASN != 64501 || row.TX != 10000 {
+		t.Fatalf("incomplete geography or traffic: %+v", row)
+	}
+	if data.Rows[1].City != "Frankfurt am Main" || data.Rows[2].Scope != "内网" {
+		t.Fatal(data.Rows)
+	}
+	w = do(s.Handler(), "GET", "/api/v2/analytics/export"+q, panelTok, nil)
+	rows, err := csv.NewReader(strings.NewReader(w.Body.String())).ReadAll()
+	if err != nil || len(rows) != 4 || rows[1][12] != "Guangdong" || rows[1][13] != "Shenzhen" {
+		t.Fatal(rows, err)
+	}
+	w = do(s.Handler(), "GET", "/api/v2/overview?period=yesterday", panelTok, nil)
+	if !strings.Contains(w.Body.String(), `"city":"Shenzhen"`) {
+		t.Fatal(w.Body)
+	}
+	for _, group := range []string{"ip", "site", "host", "status"} {
+		w = do(s.Handler(), "GET", "/api/v2/analytics/rank?period=yesterday&ip=198.51.100.7&site=b.test&status=503&group="+group, panelTok, nil)
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &data) != nil || data.Totals.TX != 6000 || data.Totals.Requests != 2 {
+			t.Fatalf("detail group %s: %s", group, w.Body)
+		}
+	}
+	s.geo.Close()
+	s.geo = geo.Open(t.TempDir())
+	w = do(s.Handler(), "GET", "/api/v2/analytics/rank"+q, panelTok, nil)
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &data) != nil || data.Totals.TX != 13000 {
+		t.Fatal("missing geography must not hide traffic", w.Body)
+	}
+}
 
 func TestAnalysisDatesAndCSV(t *testing.T) {
 	s, st, _, tok := setup(t, "127.0.0.1:8787")

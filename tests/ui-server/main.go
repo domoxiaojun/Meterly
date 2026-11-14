@@ -30,6 +30,10 @@ func main() {
 	if e != nil {
 		panic(e)
 	}
+	cfg.Geo.Dir, e = filepath.Abs("internal/geo/testdata")
+	if e != nil {
+		panic(e)
+	}
 	st, e := store.Open(cfg.DBPath)
 	if e != nil {
 		panic(e)
@@ -56,6 +60,14 @@ func main() {
 				}
 			}
 		}
+		for _, r := range []proto.Record{
+			{TS: now.Add(-24 * time.Hour).Unix(), Kind: "site", Dim1: "media.example.com", Dim2: "198.51.100.137", TX: 50000, Site: &proto.SiteMetrics{Status: 206, Requests: 2}},
+			{TS: now.Add(-24 * time.Hour).Unix(), Kind: "site", Dim1: "ipv6.example.com", Dim2: "2001:db8::1", TX: 60000, Site: &proto.SiteMetrics{Status: 200, Requests: 1}},
+			{TS: now.Add(-24 * time.Hour).Unix(), Kind: "singbox", Dim1: "198.51.100.7", Dim2: "inbound-a", RX: 1000, TX: 2000},
+		} {
+			r.Seq = int64(len(records) + 1)
+			records = append(records, r)
+		}
 		records = append(records, proto.Record{Seq: int64(len(records) + 1), TS: now.Unix() - 60, Kind: "iface", Dim1: "ens3", RX: 12345, TX: 98765})
 		meta := proto.Meta{Protocol: 2, InstanceID: name, AgentVersion: "v2.0.0", Inventory: &proto.Inventory{DefaultInterface: "ens3", Interfaces: []string{"ens3", "ens4"}, Sources: []proto.Source{{ID: "test", Site: "example.com", Path: "/var/log/nginx/access.log", Available: true, IPMode: "remote_addr"}}, OS: "linux", Arch: "amd64"}, Collectors: map[string]proto.CollectorHealth{"site": {Enabled: true, LastOK: now.Unix()}, "netdev": {Enabled: true, LastOK: now.Unix()}}}
 		for i := 0; i < len(records); i += 4000 {
@@ -64,9 +76,13 @@ func main() {
 			}
 		}
 	}
+	if _, e = st.W.ExecContext(ctx, `UPDATE ips SET country='CN',country_name='中国',asn=64501,org='Example Mobile CN' WHERE address LIKE '198.51.100.%'`); e != nil {
+		panic(e)
+	}
 	srv := server.New(cfg, st, web.FS(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer srv.Close()
-	srv.Now = func() time.Time { return now }
+	started := time.Now()
+	srv.Now = func() time.Time { return now.Add(time.Since(started)) }
 	fmt.Println("UI fixture listening at http://127.0.0.1:18787")
 	if e := http.ListenAndServe(cfg.Listen, srv.Handler()); e != nil {
 		panic(e)

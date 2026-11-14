@@ -53,6 +53,9 @@ type UpgradeTask struct {
 	CreatedAt int64  `json:"created_at"`
 }
 
+// UpgradeLifetime bounds an abandoned center task, independently of status retries.
+const UpgradeLifetime int64 = 24 * 3600
+
 type ControlResponse struct {
 	Config  DesiredConfig `json:"config"`
 	Upgrade *UpgradeTask  `json:"upgrade,omitempty"`

@@ -6,11 +6,11 @@ const time=(v,tz)=>v?new Date(v*1000).toLocaleString('zh-CN',{timeZone:tz}):'—
 const badge=(label,state='')=>`<span class="badge ${state}">${esc(label)}</span>`;
 export async function hosts({path,state,signal,options}){
  const data=await api('/hosts',{signal});const name=path.startsWith('/hosts/')?decodeURIComponent(path.slice(7)):'';
- const list=name?data.hosts.filter(x=>x.host.name===name):data.hosts;
+ const selected=name||(state.host==='all'?'':state.host);const list=selected?data.hosts.filter(x=>x.host.name===selected):data.hosts;
  if(name&&!list.length)throw new Error('找不到这台主机');
- let html=list.length?'':`<section class="empty panel"><h2>还没有采集主机</h2><p>从系统页面生成注册码并安装 agent。</p>${link('/system',state,'安装第一台主机')}</section>`;
+ let html=list.length?'':selected?'<section class="empty panel"><h2>当前筛选没有主机</h2><p>请切换全局主机筛选。</p></section>':`<section class="empty panel"><h2>还没有采集主机</h2><p>从系统页面生成注册码并安装 agent。</p>${link('/system',state,'安装第一台主机')}</section>`;
  for(const x of list){const h=x.host,m=x.meta||{},inv=m.inventory||{},desired=x.desired||{version:0,policy:{}},policy=desired.policy||{};
-  html+=`<section class="panel host-panel"><div class="section-title"><div><h2>${name?esc(h.name):link('/hosts/'+encodeURIComponent(h.name),state,h.name)}</h2><p class="muted">${esc(m.hostname||'尚未上报主机名')} · ${esc(h.agent_version||'未知版本')} · 最近上报 ${esc(time(h.last_seen,options.tz))}</p></div>${badge(h.last_seen&&Date.now()/1000-h.last_seen<300?'在线':'离线',h.last_seen&&Date.now()/1000-h.last_seen<300?'success':'warning')}</div>
+  html+=`<section class="panel host-panel"><div class="section-title"><div><h2>${name?esc(h.name):link('/hosts/'+encodeURIComponent(h.name),state,h.name)}</h2><p class="muted">${esc(m.hostname||'尚未上报主机名')} · ${esc(h.agent_version||'未知版本')} · 最近上报 ${esc(time(h.last_seen,options.tz))}</p></div>${badge(x.online?'在线':'离线',x.online?'success':'warning')}</div>
   <div class="status-chips">${Object.entries(collectorNames).map(([k,label])=>{const c=(m.collectors||{})[k]||{};return badge(`${label} · ${c.enabled?(c.fails?'异常':'已启用'):'未启用'}`,c.fails?'warning':'');}).join('')}</div>
   ${x.alerts.length?`<ul class="alert-list">${x.alerts.map(a=>`<li>${esc(a.message)}</li>`).join('')}</ul>`:''}
   <div class="definition-grid"><div><span>待补发记录</span><strong>${number(m.buffered)}</strong></div><div><span>累计丢弃</span><strong>${number(m.dropped)}</strong></div><div><span>计费网卡</span><strong>${esc(h.billing_iface)}</strong></div><div><span>配置同步</span><strong>${m.config_version===desired.version?'已同步':'等待应用'} · ${m.config_version||0} / ${desired.version}</strong></div></div>`;

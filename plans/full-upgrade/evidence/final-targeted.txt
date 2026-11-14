@@ -1,3 +1,0 @@
-ok  	github.com/domoxiaojun/Meterly/internal/agent	3.788s
-ok  	github.com/domoxiaojun/Meterly/internal/server	5.109s
-ok  	github.com/domoxiaojun/Meterly/internal/store	11.282s

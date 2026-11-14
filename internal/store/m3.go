@@ -28,7 +28,7 @@ func (s *Store) KindTotals(ctx context.Context, table string, ids []int64, kind 
 		return Pair{}, fmt.Errorf("非法表名")
 	}
 	in, args := inList(ids)
-	row := s.R.QueryRowContext(ctx, `SELECT COALESCE(SUM(rx),0), COALESCE(SUM(tx),0) FROM `+table+`
+	row := s.R.QueryRowContext(ctx, `SELECT COALESCE(metric_sum(rx),0), COALESCE(metric_sum(tx),0) FROM `+table+`
 		WHERE kind=? AND host_id IN `+in+` AND ts>=? AND ts<?`, append(append([]any{kind}, args...), from, to)...)
 	var p Pair
 	err := row.Scan(&p.RX, &p.TX)
@@ -42,7 +42,7 @@ func (s *Store) SiteTotals(ctx context.Context, table string, ids []int64, from,
 	}
 	in, args := inList(ids)
 	qargs := append(append([]any{proto.KindSite}, args...), from, to)
-	rows, err := s.R.QueryContext(ctx, `SELECT dim1, COALESCE(SUM(rx),0), COALESCE(SUM(tx),0),
+	rows, err := s.R.QueryContext(ctx, `SELECT dim1, COALESCE(metric_sum(rx),0), COALESCE(metric_sum(tx),0),
 		COUNT(DISTINCT CASE WHEN dim2<>'' AND dim2 NOT LIKE '~%' THEN dim2 END)
 		FROM `+table+` WHERE kind=? AND host_id IN `+in+` AND ts>=? AND ts<?
 		GROUP BY dim1`, qargs...)
@@ -65,7 +65,7 @@ func (s *Store) SiteTotals(ctx context.Context, table string, ids []int64, from,
 	}
 	// 请求数 / 状态类
 	qargs = append(append([]any{proto.KindSiteReq}, args...), from, to)
-	r2, err := s.R.QueryContext(ctx, `SELECT dim1, dim2, COALESCE(SUM(rx),0) FROM `+table+`
+	r2, err := s.R.QueryContext(ctx, `SELECT dim1, dim2, COALESCE(metric_sum(rx),0) FROM `+table+`
 		WHERE kind=? AND host_id IN `+in+` AND ts>=? AND ts<? GROUP BY dim1, dim2`, qargs...)
 	if err != nil {
 		return nil, err
@@ -83,18 +83,18 @@ func (s *Store) SiteTotals(ctx context.Context, table string, ids []int64, from,
 			by[site] = r
 			order = append(order, site)
 		}
-		r.Requests += n
+		r.Requests = AddMetric(r.Requests, n)
 		switch cls {
 		case "2xx":
-			r.S2xx += n
+			r.S2xx = AddMetric(r.S2xx, n)
 		case "3xx":
-			r.S3xx += n
+			r.S3xx = AddMetric(r.S3xx, n)
 		case "4xx":
-			r.S4xx += n
+			r.S4xx = AddMetric(r.S4xx, n)
 		case "5xx":
-			r.S5xx += n
+			r.S5xx = AddMetric(r.S5xx, n)
 		default:
-			r.SOther += n
+			r.SOther = AddMetric(r.SOther, n)
 		}
 	}
 	out := make([]SiteRow, 0, len(order))
@@ -124,7 +124,7 @@ func (s *Store) SiteIPs(ctx context.Context, table string, ids []int64, site str
 	}
 	in, args := inList(ids)
 	qargs := append(append([]any{proto.KindSite, site}, args...), from, to)
-	rows, err := s.R.QueryContext(ctx, `SELECT dim2, COALESCE(SUM(rx),0), COALESCE(SUM(tx),0) FROM `+table+`
+	rows, err := s.R.QueryContext(ctx, `SELECT dim2, COALESCE(metric_sum(rx),0), COALESCE(metric_sum(tx),0) FROM `+table+`
 		WHERE kind=? AND dim1=? AND host_id IN `+in+` AND ts>=? AND ts<?
 		GROUP BY dim2`, qargs...)
 	if err != nil {
@@ -137,12 +137,12 @@ func (s *Store) SiteIPs(ctx context.Context, table string, ids []int64, site str
 		if err := rows.Scan(&r.IP, &r.RX, &r.TX); err != nil {
 			return nil, total, err
 		}
-		r.Total = r.RX + r.TX
+		r.Total = AddMetric(r.RX, r.TX)
 		if r.IP == proto.DimOther || strings.HasPrefix(r.IP, "~") {
 			r.Special = strings.TrimPrefix(r.IP, "~")
 		}
-		total.RX += r.RX
-		total.TX += r.TX
+		total.RX = AddMetric(total.RX, r.RX)
+		total.TX = AddMetric(total.TX, r.TX)
 		all = append(all, r)
 	}
 	// 排序:特殊桶垫后,其余按流量
@@ -181,9 +181,9 @@ func (s *Store) Dim1Rank(ctx context.Context, table string, ids []int64, kind st
 		return nil, total, fmt.Errorf("非法表名")
 	}
 	in, args := inList(ids)
-	rows, err := s.R.QueryContext(ctx, `SELECT dim1, MAX(dim2), COALESCE(SUM(rx),0), COALESCE(SUM(tx),0) FROM `+table+`
+	rows, err := s.R.QueryContext(ctx, `SELECT dim1, MAX(dim2), COALESCE(metric_sum(rx),0), COALESCE(metric_sum(tx),0) FROM `+table+`
 		WHERE kind=? AND host_id IN `+in+` AND ts>=? AND ts<?
-		GROUP BY dim1 ORDER BY SUM(rx)+SUM(tx) DESC, dim1`, append(append([]any{kind}, args...), from, to)...)
+		GROUP BY dim1 ORDER BY metric_sum(rx)+metric_sum(tx) DESC, dim1`, append(append([]any{kind}, args...), from, to)...)
 	if err != nil {
 		return nil, total, err
 	}
@@ -194,9 +194,9 @@ func (s *Store) Dim1Rank(ctx context.Context, table string, ids []int64, kind st
 		if err := rows.Scan(&r.Key, &r.Dim2, &r.RX, &r.TX); err != nil {
 			return nil, total, err
 		}
-		r.Total = r.RX + r.TX
-		total.RX += r.RX
-		total.TX += r.TX
+		r.Total = AddMetric(r.RX, r.TX)
+		total.RX = AddMetric(total.RX, r.RX)
+		total.TX = AddMetric(total.TX, r.TX)
 		out = append(out, r)
 	}
 	return out, total, rows.Err()

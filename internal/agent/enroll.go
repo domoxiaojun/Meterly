@@ -64,7 +64,7 @@ func RedeemEnroll(ctx context.Context, serverURL, caFile string, allowHTTP bool,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "meterly-agent/"+version.Version)
-	client := &http.Client{Transport: tr, Timeout: timeout}
+	client := &http.Client{CheckRedirect: credentialRedirect, Transport: tr, Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("注册失败: %s", netErrKind(err))

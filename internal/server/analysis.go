@@ -263,10 +263,35 @@ func (s *Server) handleAnalysis(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "读取分析数据失败，请重试")
 		return
 	}
+	if result.Totals.Overflow {
+		markNumericOverflow(&m)
+	}
 	if result.Count == 0 && m.State == "available" {
 		m.State = "zero"
 	}
+	if f.Group == "ip" {
+		s.locateAnalysisRows(result.Rows)
+	}
 	writeJSON(w, 200, map[string]any{"rows": result.Rows, "totals": result.Totals, "count": result.Count, "page": result.Page, "page_size": result.PageSize, "meta": m})
+}
+
+// Resolve display geography from the current local MMDB. Existing IP records
+// gain province/city information without a schema migration or traffic reimport.
+func (s *Server) locateAnalysisRows(rows []store.AnalysisRow) {
+	for i := range rows {
+		r := &rows[i]
+		if r.Special {
+			continue
+		}
+		g := s.geo.Lookup(r.Key)
+		r.Region, r.City, r.Scope = g.Region, g.City, g.Scope
+		if g.CC != "" {
+			r.Country, r.CountryName = g.CC, g.Country
+		}
+		if g.ASN != 0 {
+			r.ASN, r.Org = g.ASN, g.Org
+		}
+	}
 }
 func (s *Server) handleAnalysisSeries(w http.ResponseWriter, r *http.Request) {
 	f, m, ok := s.analysisScope(w, r)
@@ -285,6 +310,9 @@ func (s *Server) handleAnalysisSeries(w http.ResponseWriter, r *http.Request) {
 	// Fill only the known collection span. Earlier/missing history remains explicitly unavailable.
 	by := map[int64]store.AnalysisPoint{}
 	for _, p := range points {
+		if p.Overflow {
+			markNumericOverflow(&m)
+		}
 		by[p.TS] = p
 	}
 	step := int64(3600)
@@ -336,17 +364,22 @@ func (s *Server) handleAnalysisExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="meterly-traffic.csv"`)
 	w.Header().Set("Cache-Control", "no-store")
 	cw := csv.NewWriter(file)
-	_ = cw.Write([]string{"维度", "源站上行/上传字节", "源站下行/下载字节", "已知流量合计", "请求数", "错误请求", "国家", "ASN", "运营商", "开始UTC秒", "结束UTC秒", "数据完整"})
+	_ = cw.Write([]string{"维度", "源站上行/上传字节", "源站下行/下载字节", "已知流量合计", "请求数", "错误请求", "国家", "ASN", "运营商", "开始UTC秒", "结束UTC秒", "数据完整", "省份/地区", "城市", "地址类型", "数值超限"})
 	e = s.st.ExportAnalysis(r.Context(), f, func(row store.AnalysisRow) error {
+		if f.Group == "ip" {
+			located := []store.AnalysisRow{row}
+			s.locateAnalysisRows(located)
+			row = located[0]
+		}
 		rx := "不可用"
 		if row.RXKnown {
-			rx = strconv.FormatInt(row.RX, 10)
+			rx = metricCSV(row.RX)
 		}
 		req := "不可用"
 		if row.RequestsKnown {
-			req = strconv.FormatInt(row.Requests, 10)
+			req = metricCSV(row.Requests)
 		}
-		return cw.Write([]string{csvSafe(row.Key), rx, strconv.FormatInt(row.TX, 10), strconv.FormatInt(row.Total, 10), req, strconv.FormatInt(row.Errors, 10), row.Country, strconv.FormatUint(uint64(row.ASN), 10), csvSafe(row.Org), strconv.FormatInt(m.From, 10), strconv.FormatInt(m.To, 10), strconv.FormatBool(m.Complete)})
+		return cw.Write([]string{csvSafe(row.Key), rx, metricCSV(row.TX), metricCSV(row.Total), req, metricCSV(row.Errors), row.Country, strconv.FormatUint(uint64(row.ASN), 10), csvSafe(row.Org), strconv.FormatInt(m.From, 10), strconv.FormatInt(m.To, 10), strconv.FormatBool(m.Complete && !row.Overflow), csvSafe(row.Region), csvSafe(row.City), csvSafe(row.Scope), strconv.FormatBool(row.Overflow)})
 	})
 	cw.Flush()
 	if e == nil {
@@ -385,7 +418,7 @@ func (s *Server) handleAnalysisOptions(w http.ResponseWriter, r *http.Request) {
 		}
 		sites = append(sites, map[string]any{"site": id, "label": label, "first_seen": first, "last_seen": last})
 	}
-	writeJSON(w, 200, map[string]any{"hosts": hosts, "sites": sites, "tz": s.cfg.TZ, "sources": []string{"site", "singbox"}, "minute_hours": s.st.Retention.MinuteDetailHours, "detail_days": s.st.Retention.HourDays})
+	writeJSON(w, 200, map[string]any{"hosts": hosts, "sites": sites, "tz": s.cfg.TZ, "geo": s.geo.Status(), "sources": []string{"site", "singbox"}, "minute_hours": s.st.Retention.MinuteDetailHours, "detail_days": s.st.Retention.HourDays})
 }
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	copyURL := *r.URL
@@ -422,10 +455,29 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		prev.To = m.From
 		prev.From = m.From - span
 	}
+	// Use one retained resolution for both comparison periods.
+	compare := f
+	if prev.From < s.Now().Unix()-int64(s.st.Retention.MinuteDetailHours)*3600 {
+		prev.Table = "hour"
+		compare.Table = "hour"
+	}
+	comparisonComplete := m.Complete && prev.From >= m.AvailableFrom && prev.From >= s.Now().Unix()-m.DetailUntil && prev.To <= m.LastSample+120
+	if prev.Table == "hour" && (prev.From%3600 != 0 || prev.To%3600 != 0 || f.From%3600 != 0 || f.To%3600 != 0) {
+		comparisonComplete = false
+	}
 	previous, pe := s.st.Analyze(r.Context(), prev)
+	current := sites
+	if compare.Table != f.Table {
+		current, e = s.st.Analyze(r.Context(), compare)
+	}
+	issues, ie := s.st.DataIssues(r.Context(), prev)
+	comparisonComplete = comparisonComplete && pe == nil && e == nil && ie == nil && len(issues) == 0 && !previous.Totals.Overflow && !current.Totals.Overflow
 	growth := any(nil)
-	if pe == nil && previous.Totals.Total > 0 && prev.From >= m.AvailableFrom && prev.From >= s.Now().Unix()-m.DetailUntil {
-		growth = float64(sites.Totals.Total-previous.Totals.Total) * 100 / float64(previous.Totals.Total)
+	if comparisonComplete && previous.Totals.Total > 0 {
+		growth = float64(current.Totals.Total-previous.Totals.Total) * 100 / float64(previous.Totals.Total)
+	}
+	if sites.Totals.Overflow {
+		markNumericOverflow(&m)
 	}
 	hosts, e := s.st.Hosts(r.Context())
 	if e != nil {
@@ -445,22 +497,45 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		if !selected {
 			continue
 		}
-		if h.LastSeen > 0 && s.Now().Unix()-h.LastSeen < 300 {
+		if s.hostOnline(h, s.Now()) {
 			online++
 		}
 		table := "fact_" + f.Table
 		ifs, e := s.st.KindDim1Totals(r.Context(), table, []int64{h.ID}, "iface", f.From, f.To)
 		if e == nil {
 			p := ifs[h.BillingIface]
-			network.RX += p.RX
-			network.TX += p.TX
+			network.RX = store.AddMetric(network.RX, p.RX)
+			network.TX = store.AddMetric(network.TX, p.TX)
 		}
-		alerts = append(alerts, hostAlerts(h, s.Now())...)
+		alerts = append(alerts, s.hostAlerts(h, s.Now())...)
 	}
 	f.Group = "ip"
 	ips := store.AnalysisResult{Rows: []store.AnalysisRow{}}
 	if m.IPsAvailable {
 		ips, _ = s.st.Analyze(r.Context(), f)
+		s.locateAnalysisRows(ips.Rows)
 	}
-	writeJSON(w, 200, map[string]any{"site": sites.Totals, "top_sites": sites.Rows, "top_ips": ips.Rows, "network": network, "online": online, "host_count": len(f.HostIDs), "growth_pct": growth, "previous": previous.Totals, "previous_from": prev.From, "previous_to": prev.To, "alerts": alerts, "meta": m})
+	writeJSON(w, 200, map[string]any{"site": sites.Totals, "top_sites": sites.Rows, "top_ips": ips.Rows, "network": network, "online": online, "host_count": len(f.HostIDs), "growth_pct": growth, "comparison_complete": comparisonComplete, "comparison_resolution": compare.Table, "previous": previous.Totals, "previous_from": prev.From, "previous_to": prev.To, "alerts": alerts, "meta": m})
+}
+
+func markNumericOverflow(m *analysisMeta) {
+	if !containsReason(m.Reasons, "统计值超出安全范围，超限指标不可用") {
+		m.Reasons = append(m.Reasons, "统计值超出安全范围，超限指标不可用")
+	}
+	m.Complete = false
+	m.State = "partial"
+}
+func containsReason(reasons []string, target string) bool {
+	for _, r := range reasons {
+		if r == target {
+			return true
+		}
+	}
+	return false
+}
+func metricCSV(n int64) string {
+	if n >= store.MetricLimit {
+		return "超出统计范围"
+	}
+	return strconv.FormatInt(n, 10)
 }

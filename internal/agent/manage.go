@@ -349,11 +349,33 @@ func (a *Agent) processUpgrade(ctx context.Context, task *proto.UpgradeTask) {
 	if b, e := os.ReadFile(path); e == nil {
 		var result UpgradeResult
 		if json.Unmarshal(b, &result) == nil {
+			if result.Status == "running" && a.updaterStopped(ctx, path) {
+				result.Status = "failed"
+				result.Message = "更新器已中断；安装结果未确认，回滚备份保留，请检查版本后重新发起升级"
+				raw, _ := json.Marshal(result)
+				if writeFileAtomic(path, raw) != nil {
+					return
+				}
+			}
 			if e = a.control(ctx, "POST", "/api/v2/agent/upgrade/status", result, nil); e == nil && result.Status != "running" {
+				// Remove the request first: a crash must not requeue an acknowledged task.
+				if e = os.Remove(filepath.Join(a.cfg.StateDir, "upgrade-request.json")); e != nil && !os.IsNotExist(e) {
+					return
+				}
 				_ = os.Remove(path)
 			}
 			return
 		}
+	}
+	// A crash can occur after queuing the request but before the updater writes running.
+	req := filepath.Join(a.cfg.StateDir, "upgrade-request.json")
+	if b, e := os.ReadFile(req); e == nil {
+		var old proto.UpgradeTask
+		if json.Unmarshal(b, &old) == nil && a.updaterStopped(ctx, req) {
+			raw, _ := json.Marshal(UpgradeResult{ID: old.ID, Status: "failed", Message: "更新器未完成排队任务，请重新发起升级"})
+			_ = writeFileAtomic(path, raw)
+		}
+		return
 	}
 	if task != nil {
 		if e := a.queueUpgrade(*task); e != nil {
@@ -364,12 +386,47 @@ func (a *Agent) processUpgrade(ctx context.Context, task *proto.UpgradeTask) {
 	}
 }
 
+func (a *Agent) upgradeExec(ctx context.Context, args ...string) ([]byte, error) {
+	fn := a.UpgradeExec
+	if fn == nil {
+		fn = defaultExec
+	}
+	return fn(ctx, "systemctl", args...)
+}
+
+func (a *Agent) updaterStopped(ctx context.Context, path string) bool {
+	fi, e := os.Stat(path)
+	if e != nil || a.Now().Sub(fi.ModTime()) < 30*time.Second {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	b, e := a.upgradeExec(ctx, "show", "--all", "--property=ActiveState", "--property=Job", "meterly-agent-updater.service")
+	var state, job string
+	jobSeen := false
+	for _, line := range strings.Split(string(b), "\n") {
+		key, value, _ := strings.Cut(line, "=")
+		switch key {
+		case "ActiveState":
+			state = value
+		case "Job":
+			job = value
+			jobSeen = true
+		}
+	}
+	// An inactive unit may still have a queued start job. Do not race that job.
+	return e == nil && jobSeen && (job == "" || job == "0") && (state == "inactive" || state == "failed")
+}
+
 func (a *Agent) queueUpgrade(u proto.UpgradeTask) error {
 	if runtime.GOOS != "linux" {
 		return errors.New("受控升级仅支持 Linux systemd")
 	}
 	if e := ValidateUpgrade(u); e != nil {
 		return e
+	}
+	if u.CreatedAt > 0 && a.Now().Unix()-u.CreatedAt >= proto.UpgradeLifetime {
+		return errors.New("升级任务已过期")
 	}
 	req := filepath.Join(a.cfg.StateDir, "upgrade-request.json")
 	if b, e := os.ReadFile(req); e == nil {
@@ -384,7 +441,7 @@ func (a *Agent) queueUpgrade(u proto.UpgradeTask) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if _, e := defaultExec(ctx, "systemctl", "start", "--no-block", "meterly-agent-updater.service"); e != nil {
+	if _, e := a.upgradeExec(ctx, "start", "--no-block", "meterly-agent-updater.service"); e != nil {
 		_ = os.Remove(req)
 		return errors.New("无法启动更新器，请检查安装的 systemd unit")
 	}

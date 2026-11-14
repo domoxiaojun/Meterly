@@ -1,2 +1,0 @@
-ok  	github.com/domoxiaojun/Meterly/internal/store	10.861s
-ok  	github.com/domoxiaojun/Meterly/internal/server	4.095s

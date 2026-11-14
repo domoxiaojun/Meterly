@@ -67,11 +67,13 @@ func (u Updater) Apply(ctx context.Context, stateDir, target string) error {
 	if e = ValidateUpgrade(task); e != nil {
 		return e
 	}
-	result := func(status, msg string) {
+	result := func(status, msg string) error {
 		data, _ := json.Marshal(UpgradeResult{ID: task.ID, Status: status, Message: msg})
-		_ = writeFileAtomic(filepath.Join(stateDir, "upgrade-result.json"), data)
+		return writeFileAtomic(filepath.Join(stateDir, "upgrade-result.json"), data)
 	}
-	result("running", "正在校验并安装新版本")
+	if e = result("running", "正在校验并安装新版本"); e != nil {
+		return e
+	}
 	old, e := os.ReadFile(target)
 	if e != nil {
 		result("failed", "无法备份当前版本")
@@ -83,6 +85,7 @@ func (u Updater) Apply(ctx context.Context, stateDir, target string) error {
 		return e
 	}
 	if e = os.Chmod(backup, 0755); e != nil {
+		_ = result("failed", "无法设置回滚版本权限")
 		return e
 	}
 	if e = u.Download(ctx, task.URL, task.SHA256, target); e != nil {
@@ -112,7 +115,9 @@ func (u Updater) Apply(ctx context.Context, stateDir, target string) error {
 	if restartErr == nil {
 		for {
 			if healthy() {
-				result("succeeded", "新版本已启动并完成本地初始化")
+				if e = result("succeeded", "新版本已启动并完成本地初始化"); e != nil {
+					return e
+				}
 				_ = os.Remove(req)
 				return nil
 			}

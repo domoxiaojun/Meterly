@@ -49,8 +49,8 @@ func (n *NetDev) Collect() ([]Counter, error) {
 		}
 		out = append(out, Counter{Kind: "iface", Key: name, RX: c[0], TX: c[1]})
 	}
-	if len(out) == 0 && len(missing) > 0 {
-		return nil, fmt.Errorf("网卡不存在: %s", strings.Join(missing, ","))
+	if len(missing) > 0 {
+		return out, fmt.Errorf("网卡不存在: %s", strings.Join(missing, ","))
 	}
 	return out, nil
 }

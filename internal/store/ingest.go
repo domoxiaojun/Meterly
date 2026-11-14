@@ -74,12 +74,20 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return res, err
 	}
+	if _, err = tx.ExecContext(ctx, "SAVEPOINT records"); err != nil {
+		return res, err
+	}
+	overflow := false
 	minute, hour, day := map[bucketKey]*[2]uint64{}, map[bucketKey]*[2]uint64{}, map[bucketKey]*[2]uint64{}
 	add := func(m map[bucketKey]*[2]uint64, k bucketKey, rx, tx uint64) {
 		v := m[k]
 		if v == nil {
 			v = &[2]uint64{}
 			m[k] = v
+		}
+		if rx >= uint64(MetricLimit) || tx >= uint64(MetricLimit)-rx || v[0]+v[1] >= uint64(MetricLimit)-rx-tx {
+			overflow = true
+			return
 		}
 		v[0] += rx
 		v[1] += tx
@@ -101,6 +109,7 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 	if billingIface == "" && meta.Inventory != nil {
 		billingIface = meta.Inventory.DefaultInterface
 	}
+	initialBillingIface := billingIface
 	seenSeq := map[int64]bool{}
 	coverage := map[string]*[2]int64{}
 	ipIDs := map[string]int64{}
@@ -123,6 +132,9 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 			continue
 		}
 		res.Accepted++
+		if overflow {
+			continue
+		}
 		if r.Kind == proto.KindSite && strings.HasPrefix(r.Dim1, "source-") {
 			r.Dim1 = "unidentified:" + h.Name + ":" + r.Dim1
 		}
@@ -148,7 +160,10 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 				ipIDs[address] = id
 			}
 			if r.Kind == proto.KindSite {
-				if err = ingestSite(ctx, tx, h.ID, r, id); err != nil {
+				if err = ingestSite(ctx, tx, h.ID, r, id); errors.Is(err, errMetricOverflow) {
+					overflow = true
+					continue
+				} else if err != nil {
 					return res, err
 				}
 			}
@@ -179,6 +194,52 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 			return res, err
 		}
 	}
+	for tbl, m := range map[string]map[bucketKey]*[2]uint64{"fact_minute": minute, "fact_hour": hour, "fact_day": day} {
+		if overflow || len(m) == 0 {
+			continue
+		}
+		st, err := tx.PrepareContext(ctx, `INSERT INTO `+tbl+`(host_id,ts,kind,dim1,dim2,rx,tx) VALUES(?,?,?,?,?,?,?)
+			ON CONFLICT(host_id,ts,kind,dim1,dim2) DO UPDATE SET rx=rx+excluded.rx, tx=tx+excluded.tx WHERE typeof(rx)='integer' AND typeof(tx)='integer' AND rx>=0 AND tx>=0 AND rx < 4611686018427387903-tx-excluded.rx-excluded.tx`)
+		if err != nil {
+			return res, err
+		}
+		for k, v := range m {
+			rr, err := st.ExecContext(ctx, h.ID, k.ts, k.kind, k.dim1, k.dim2, int64(v[0]), int64(v[1]))
+			if err != nil {
+				st.Close()
+				return res, err
+			}
+			if n, _ := rr.RowsAffected(); n == 0 {
+				overflow = true
+				break
+			}
+		}
+		st.Close()
+	}
+	if overflow {
+		billingIface = initialBillingIface
+		if _, err = tx.ExecContext(ctx, "ROLLBACK TO records"); err != nil {
+			return res, err
+		}
+		res.Rejected += res.Accepted
+		res.Accepted = 0
+		from, to := nowU-60, nowU
+		for _, r := range recs {
+			if r.Seq > hwm && ValidRecord(&r, nowU) {
+				from = min(from, r.TS-60)
+				if r.PrevTS > 0 {
+					from = min(from, r.PrevTS)
+				}
+				to = max(to, r.TS)
+			}
+		}
+		if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO data_issues(host_id,from_ts,to_ts,reason) VALUES(?,?,?,?)", h.ID, from, to, "中心拒绝溢出批次，整批新记录未入库"); err != nil {
+			return res, err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, "RELEASE records"); err != nil {
+		return res, err
+	}
 	for name, health := range meta.Collectors {
 		kind := name
 		if name == "netdev" {
@@ -192,8 +253,17 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 				return res, err
 			}
 		}
-		if health.LastErr != "" {
-			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO data_issues(host_id,from_ts,to_ts,reason) VALUES(?,?,?,?)`, h.ID, nowU-60, nowU, name+": "+health.LastErr); err != nil {
+		issueAt := health.ErrAt
+		// Old agents may omit err_at. Only an active failure can use the send time.
+		if issueAt == 0 && health.Fails > 0 {
+			issueAt = meta.SentAt
+			if issueAt == 0 {
+				issueAt = nowU
+			}
+		}
+		if health.LastErr != "" && issueAt > 0 {
+			issueAt = min(issueAt, nowU)
+			if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO data_issues(host_id,from_ts,to_ts,reason) VALUES(?,?,?,?)`, h.ID, issueAt-60, issueAt, name+": "+health.LastErr); err != nil {
 				return res, err
 			}
 		}
@@ -202,23 +272,6 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO data_issues(host_id,from_ts,to_ts,reason) VALUES(?,?,?,?)`, h.ID, meta.DroppedFrom, meta.DroppedTo, "agent 缓冲数据丢弃"); err != nil {
 			return res, err
 		}
-	}
-	for tbl, m := range map[string]map[bucketKey]*[2]uint64{"fact_minute": minute, "fact_hour": hour, "fact_day": day} {
-		if len(m) == 0 {
-			continue
-		}
-		st, err := tx.PrepareContext(ctx, `INSERT INTO `+tbl+`(host_id,ts,kind,dim1,dim2,rx,tx) VALUES(?,?,?,?,?,?,?)
-			ON CONFLICT(host_id,ts,kind,dim1,dim2) DO UPDATE SET rx=rx+excluded.rx, tx=tx+excluded.tx`)
-		if err != nil {
-			return res, err
-		}
-		for k, v := range m {
-			if _, err := st.ExecContext(ctx, h.ID, k.ts, k.kind, k.dim1, k.dim2, int64(v[0]), int64(v[1])); err != nil {
-				st.Close()
-				return res, err
-			}
-		}
-		st.Close()
 	}
 	if maxSeq > hwm {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ingest_hwm(host_id,instance,seq,ts,updated) VALUES(?,?,?,?,?)

@@ -16,7 +16,7 @@ type Pair struct {
 	TX int64 `json:"tx"`
 }
 
-func (p Pair) Total() int64 { return p.RX + p.TX }
+func (p Pair) Total() int64 { return AddMetric(p.RX, p.TX) }
 
 func inList(ids []int64) (string, []any) {
 	ph := make([]string, len(ids))
@@ -50,7 +50,7 @@ func TableFor(from int64, now time.Time) string {
 // KindDim1Totals 返回某 kind 在 [from,to) 内按 dim1 汇总,如各网卡总量。
 func (s *Store) KindDim1Totals(ctx context.Context, table string, ids []int64, kind string, from, to int64) (map[string]Pair, error) {
 	in, args := inList(ids)
-	rows, err := s.R.QueryContext(ctx, fmt.Sprintf(`SELECT dim1, SUM(rx), SUM(tx) FROM %s WHERE kind=? AND host_id IN %s AND ts>=? AND ts<? GROUP BY dim1`, table, in),
+	rows, err := s.R.QueryContext(ctx, fmt.Sprintf(`SELECT dim1, metric_sum(rx), metric_sum(tx) FROM %s WHERE kind=? AND host_id IN %s AND ts>=? AND ts<? GROUP BY dim1`, table, in),
 		append(append([]any{kind}, args...), from, to)...)
 	if err != nil {
 		return nil, err
@@ -87,7 +87,7 @@ func (s *Store) DaySeries(ctx context.Context, ids []int64, kind, dim1 string, f
 		hours, err = s.HourSeries(ctx, ids, kind, dim1, from, to)
 	} else {
 		in, args := inList(ids)
-		q := fmt.Sprintf(`SELECT ts, SUM(rx), SUM(tx) FROM fact_day WHERE kind=? AND host_id IN %s AND ts>=? AND ts<?`, in)
+		q := fmt.Sprintf(`SELECT ts, metric_sum(rx), metric_sum(tx) FROM fact_day WHERE kind=? AND host_id IN %s AND ts>=? AND ts<?`, in)
 		a := append(append([]any{kind}, args...), from, to)
 		if dim1 != "" {
 			q += ` AND dim1=?`
@@ -120,8 +120,8 @@ func (s *Store) DaySeries(ctx context.Context, ids []int64, kind, dim1 string, f
 			m[d] = p
 			keys = append(keys, d)
 		}
-		p.RX += h.RX
-		p.TX += h.TX
+		p.RX = AddMetric(p.RX, h.RX)
+		p.TX = AddMetric(p.TX, h.TX)
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	out := make([]Point, 0, len(keys))
@@ -155,7 +155,7 @@ func IsRelay(inbound string) bool {
 
 func (s *Store) singboxRows(ctx context.Context, table string, ids []int64, from, to int64) (map[[2]string]Pair, error) {
 	in, args := inList(ids)
-	rows, err := s.R.QueryContext(ctx, fmt.Sprintf(`SELECT dim1, dim2, SUM(rx), SUM(tx) FROM %s WHERE kind=? AND host_id IN %s AND ts>=? AND ts<? GROUP BY dim1, dim2`, table, in),
+	rows, err := s.R.QueryContext(ctx, fmt.Sprintf(`SELECT dim1, dim2, metric_sum(rx), metric_sum(tx) FROM %s WHERE kind=? AND host_id IN %s AND ts>=? AND ts<? GROUP BY dim1, dim2`, table, in),
 		append(append([]any{proto.KindSingbox}, args...), from, to)...)
 	if err != nil {
 		return nil, err
@@ -182,8 +182,8 @@ func (s *Store) TopIPs(ctx context.Context, table string, ids []int64, from, to 
 	by := map[string]*IPRow{}
 	var total Pair
 	for k, p := range raw {
-		total.RX += p.RX
-		total.TX += p.TX
+		total.RX = AddMetric(total.RX, p.RX)
+		total.TX = AddMetric(total.TX, p.TX)
 		r := by[k[0]]
 		if r == nil {
 			r = &IPRow{IP: k[0], Inbounds: []InboundShare{}}
@@ -195,15 +195,15 @@ func (s *Store) TopIPs(ctx context.Context, table string, ids []int64, from, to 
 			}
 			by[k[0]] = r
 		}
-		r.RX += p.RX
-		r.TX += p.TX
+		r.RX = AddMetric(r.RX, p.RX)
+		r.TX = AddMetric(r.TX, p.TX)
 		if k[1] != "" {
 			r.Inbounds = append(r.Inbounds, InboundShare{Inbound: k[1], Relay: IsRelay(k[1]), Pair: p})
 		}
 	}
 	var list, special []IPRow
 	for _, r := range by {
-		r.Total = r.RX + r.TX
+		r.Total = AddMetric(r.RX, r.TX)
 		sort.Slice(r.Inbounds, func(i, j int) bool { return r.Inbounds[i].Total() > r.Inbounds[j].Total() })
 		if len(r.Inbounds) > 0 {
 			r.Relay = r.Inbounds[0].Relay
@@ -220,21 +220,21 @@ func (s *Store) TopIPs(ctx context.Context, table string, ids []int64, from, to 
 	if limit > 0 && len(list) > limit {
 		other := IPRow{IP: proto.DimOther, Special: "other", Inbounds: []InboundShare{}}
 		for _, r := range list[limit:] {
-			other.RX += r.RX
-			other.TX += r.TX
+			other.RX = AddMetric(other.RX, r.RX)
+			other.TX = AddMetric(other.TX, r.TX)
 		}
 		list = list[:limit]
 		merged := false
 		for i := range special {
 			if special[i].Special == "other" {
-				special[i].RX += other.RX
-				special[i].TX += other.TX
-				special[i].Total = special[i].RX + special[i].TX
+				special[i].RX = AddMetric(special[i].RX, other.RX)
+				special[i].TX = AddMetric(special[i].TX, other.TX)
+				special[i].Total = AddMetric(special[i].RX, special[i].TX)
 				merged = true
 			}
 		}
 		if !merged {
-			other.Total = other.RX + other.TX
+			other.Total = AddMetric(other.RX, other.TX)
 			special = append(special, other)
 		}
 	}
@@ -267,15 +267,15 @@ func (s *Store) Inbounds(ctx context.Context, table string, ids []int64, from, t
 			r = &InboundRow{Inbound: name, Relay: IsRelay(name)}
 			by[name] = r
 		}
-		r.RX += p.RX
-		r.TX += p.TX
+		r.RX = AddMetric(r.RX, p.RX)
+		r.TX = AddMetric(r.TX, p.TX)
 		if !strings.HasPrefix(k[0], "~") {
 			r.IPs++
 		}
 	}
 	out := make([]InboundRow, 0, len(by))
 	for _, r := range by {
-		r.Total = r.RX + r.TX
+		r.Total = AddMetric(r.RX, r.TX)
 		out = append(out, *r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Total > out[j].Total })

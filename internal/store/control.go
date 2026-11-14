@@ -52,13 +52,41 @@ func (s *Store) SetHostConfig(ctx context.Context, id, expected int64, p proto.P
 	return out, tx.Commit()
 }
 func (s *Store) CreateUpgrade(ctx context.Context, id int64, u proto.UpgradeTask) (int64, error) {
-	r, e := s.W.ExecContext(ctx, `INSERT INTO upgrade_tasks(host_id,version,url,sha256,status,created_at,updated_at) VALUES(?,?,?,?,'pending',?,?)`, id, u.Version, u.URL, u.SHA256, u.CreatedAt, u.CreatedAt)
+	tx, e := s.W.BeginTx(ctx, nil)
 	if e != nil {
 		return 0, e
 	}
-	return r.LastInsertId()
+	defer tx.Rollback()
+	if _, e = tx.ExecContext(ctx, expireUpgradeSQL, u.CreatedAt, u.CreatedAt-proto.UpgradeLifetime); e != nil {
+		return 0, e
+	}
+	r, e := tx.ExecContext(ctx, `INSERT INTO upgrade_tasks(host_id,version,url,sha256,status,created_at,updated_at) VALUES(?,?,?,?,'pending',?,?)`, id, u.Version, u.URL, u.SHA256, u.CreatedAt, u.CreatedAt)
+	if e != nil {
+		return 0, e
+	}
+	taskID, e := r.LastInsertId()
+	if e != nil {
+		return 0, e
+	}
+	return taskID, tx.Commit()
 }
-func (s *Store) NextUpgrade(ctx context.Context, id int64) (*proto.UpgradeTask, error) {
+
+const expiredUpgradeMessage = "升级任务超过 24 小时未完成，已过期；实际安装状态需检查主机"
+const expireUpgradeSQL = `UPDATE upgrade_tasks SET status='failed',message='` + expiredUpgradeMessage + `',updated_at=? WHERE status IN ('pending','running') AND created_at<=?`
+
+func (s *Store) ExpireUpgrades(ctx context.Context, now time.Time) error {
+	_, e := s.W.ExecContext(ctx, expireUpgradeSQL, now.Unix(), now.Unix()-proto.UpgradeLifetime)
+	return e
+}
+
+func (s *Store) NextUpgrade(ctx context.Context, id int64, at ...time.Time) (*proto.UpgradeTask, error) {
+	now := time.Now()
+	if len(at) > 0 {
+		now = at[0]
+	}
+	if e := s.ExpireUpgrades(ctx, now); e != nil {
+		return nil, e
+	}
 	var u proto.UpgradeTask
 	e := s.R.QueryRowContext(ctx, `SELECT id,version,url,sha256,status,message,created_at FROM upgrade_tasks WHERE host_id=? AND status IN ('pending','running') ORDER BY id LIMIT 1`, id).Scan(&u.ID, &u.Version, &u.URL, &u.SHA256, &u.Status, &u.Message, &u.CreatedAt)
 	if errors.Is(e, sql.ErrNoRows) {
@@ -78,8 +106,8 @@ func (s *Store) UpgradeStatus(ctx context.Context, host, id int64, status, msg s
 	}
 	n, _ := r.RowsAffected()
 	if n == 0 {
-		var current string
-		if e := s.R.QueryRowContext(ctx, "SELECT status FROM upgrade_tasks WHERE host_id=? AND id=?", host, id).Scan(&current); e == nil && current == status {
+		var current, message string
+		if e := s.R.QueryRowContext(ctx, "SELECT status,message FROM upgrade_tasks WHERE host_id=? AND id=?", host, id).Scan(&current, &message); e == nil && (current == status || (current == "failed" && message == expiredUpgradeMessage)) {
 			return nil
 		}
 		return ErrConflict

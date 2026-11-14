@@ -39,8 +39,9 @@ type Agent struct {
 	log     *slog.Logger
 
 	// 可注入,便于测试伪造时间/开机 ID/clash 拉取
-	Now    func() time.Time
-	BootID func() string
+	Now         func() time.Time
+	BootID      func() string
+	UpgradeExec ExecFunc
 
 	health        map[string]proto.CollectorHealth
 	backoff       time.Duration
@@ -109,7 +110,7 @@ func New(cfg *Config, log *slog.Logger) (*Agent, error) {
 	}
 	a := &Agent{
 		cfg: cfg, buf: buf, st: st, log: log,
-		client: &http.Client{Transport: tr, Timeout: cfg.HTTPTimeout.Duration},
+		client: &http.Client{CheckRedirect: credentialRedirect, Transport: tr, Timeout: cfg.HTTPTimeout.Duration},
 		Now:    time.Now, BootID: ReadBootID,
 		health: map[string]proto.CollectorHealth{},
 	}
@@ -229,17 +230,17 @@ func (a *Agent) Tick(ctx context.Context) (int, error) {
 			a.markErr("netdev", now, err)
 		} else {
 			a.markOK("netdev", now, "")
-			for _, cur := range cs {
-				prev, had := a.st.Ifaces[cur.Key]
-				d, ok := a.ifaceDelta(prev, had, cur, boot, now)
-				a.st.Ifaces[cur.Key] = IfaceState{BootID: boot, RX: cur.RX, TX: cur.TX, TS: now}
-				if ok && (d.RX > 0 || d.TX > 0) {
-					pts := int64(0)
-					if prev.BootID == boot {
-						pts = prev.TS
-					}
-					add(d, pts)
+		}
+		for _, cur := range cs {
+			prev, had := a.st.Ifaces[cur.Key]
+			d, ok := a.ifaceDelta(prev, had, cur, boot, now)
+			a.st.Ifaces[cur.Key] = IfaceState{BootID: boot, RX: cur.RX, TX: cur.TX, TS: now}
+			if ok && (d.RX > 0 || d.TX > 0) {
+				pts := int64(0)
+				if prev.BootID == boot {
+					pts = prev.TS
 				}
+				add(d, pts)
 			}
 		}
 	}

@@ -112,7 +112,7 @@ func billed(mode string, p store.Pair) int64 {
 	case "max":
 		return max(p.RX, p.TX)
 	}
-	return p.RX + p.TX
+	return store.AddMetric(p.RX, p.TX)
 }
 
 type hostOverview struct {
@@ -160,7 +160,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		p, _ := resolvePeriod(r, now, loc, h.ResetDay)
 		ho := hostOverview{Name: h.Name, LastSeen: h.LastSeen, AgentVersion: h.AgentVersion, Revoked: h.RevokedAt > 0,
 			TZ: h.TZ, ResetDay: h.ResetDay, BillingMode: h.BillingMode, BillingIface: h.BillingIface, Quota: h.QuotaBytes, Period: p,
-			Online: h.LastSeen > 0 && now.Unix()-h.LastSeen < int64(s.cfg.OfflineAfter)*60}
+			Online: s.hostOnline(h, now)}
 		var meta proto.Meta
 		if json.Unmarshal([]byte(h.MetaJSON), &meta) == nil {
 			ho.Collectors, ho.Buffered, ho.Dropped, ho.Hostname = meta.Collectors, meta.Buffered, meta.Dropped, meta.Hostname
@@ -173,16 +173,16 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 		bi := ho.Ifaces[h.BillingIface]
 		ho.Billed = billed(h.BillingMode, bi)
-		totBilled += ho.Billed
-		totIface.RX += bi.RX
-		totIface.TX += bi.TX
+		totBilled = store.AddMetric(totBilled, ho.Billed)
+		totIface.RX = store.AddMetric(totIface.RX, bi.RX)
+		totIface.TX = store.AddMetric(totIface.TX, bi.TX)
 		sb, _ := s.st.KindDim1Totals(ctx, tbl, ids, proto.KindSingbox, p.From, p.To)
 		for _, v := range sb {
-			ho.Singbox.RX += v.RX
-			ho.Singbox.TX += v.TX
+			ho.Singbox.RX = store.AddMetric(ho.Singbox.RX, v.RX)
+			ho.Singbox.TX = store.AddMetric(ho.Singbox.TX, v.TX)
 		}
-		totSB.RX += ho.Singbox.RX
-		totSB.TX += ho.Singbox.TX
+		totSB.RX = store.AddMetric(totSB.RX, ho.Singbox.RX)
+		totSB.TX = store.AddMetric(totSB.TX, ho.Singbox.TX)
 		day := store.DayStart(now.Unix(), loc)
 		if td, err := s.st.KindDim1Totals(ctx, "fact_hour", ids, proto.KindIface, day, day+86400); err == nil {
 			ho.Today = billed(h.BillingMode, td[h.BillingIface])
@@ -214,17 +214,17 @@ func (s *Server) forecast(r *http.Request, h *store.Host, loc *time.Location, p 
 		if err == nil && len(days) > 0 {
 			var sum int64
 			for _, d := range days {
-				sum += billed(h.BillingMode, d.Pair)
+				sum = store.AddMetric(sum, billed(h.BillingMode, d.Pair))
 			}
 			n := float64(today-from) / 86400
-			return used + int64(float64(sum)/n*remain)
+			return store.AddMetric(used, store.EstimateMetric(float64(sum)/n*remain))
 		}
 	}
 	el := float64(now.Unix()-p.From) / 86400
 	if el <= 0 {
 		return used
 	}
-	return used + int64(float64(used)/el*remain)
+	return store.AddMetric(used, store.EstimateMetric(float64(used)/el*remain))
 }
 
 func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
@@ -268,8 +268,8 @@ func (s *Server) handleSeries(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, pt := range points {
 				v := combined[pt.TS]
-				v.RX += pt.RX
-				v.TX += pt.TX
+				v.RX = store.AddMetric(v.RX, pt.RX)
+				v.TX = store.AddMetric(v.TX, pt.TX)
 				combined[pt.TS] = v
 			}
 		}

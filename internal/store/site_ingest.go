@@ -55,16 +55,21 @@ func ingestSite(ctx context.Context, tx *sql.Tx, host int64, r *proto.Record, ip
 			step = 3600
 		}
 		ts := (r.TS - 1) / step * step
-		_, e := tx.ExecContext(ctx, `INSERT INTO `+table+`(host_id,ts,site,ip_id,status,rx_known,ip_source,rx,tx,requests) VALUES(?,?,?,?,?,?,?,?,?,?)
-   ON CONFLICT(host_id,ts,site,ip_id,status,rx_known,ip_source) DO UPDATE SET rx=rx+excluded.rx,tx=tx+excluded.tx,requests=requests+excluded.requests`, host, ts, r.Dim1, ipID, m.Status, known, m.IPSource, r.RX, r.TX, m.Requests)
+		rr, e := tx.ExecContext(ctx, `INSERT INTO `+table+`(host_id,ts,site,ip_id,status,rx_known,ip_source,rx,tx,requests) VALUES(?,?,?,?,?,?,?,?,?,?)
+   ON CONFLICT(host_id,ts,site,ip_id,status,rx_known,ip_source) DO UPDATE SET rx=rx+excluded.rx,tx=tx+excluded.tx,requests=requests+excluded.requests WHERE typeof(rx)='integer' AND typeof(tx)='integer' AND typeof(requests)='integer' AND rx>=0 AND tx>=0 AND requests>=0 AND rx < 4611686018427387903-tx-excluded.rx-excluded.tx AND requests < 4611686018427387903-excluded.requests`, host, ts, r.Dim1, ipID, m.Status, known, m.IPSource, r.RX, r.TX, m.Requests)
 		if e != nil {
 			return e
 		}
+		if n, _ := rr.RowsAffected(); n == 0 {
+			return errMetricOverflow
+		}
 	}
 	ts := (r.TS - 1) / 86400 * 86400
-	if _, e := tx.ExecContext(ctx, `INSERT INTO site_day(host_id,ts,site,status,rx_known,rx,tx,requests) VALUES(?,?,?,?,?,?,?,?)
- ON CONFLICT(host_id,ts,site,status,rx_known) DO UPDATE SET rx=rx+excluded.rx,tx=tx+excluded.tx,requests=requests+excluded.requests`, host, ts, r.Dim1, m.Status, known, r.RX, r.TX, m.Requests); e != nil {
+	if rr, e := tx.ExecContext(ctx, `INSERT INTO site_day(host_id,ts,site,status,rx_known,rx,tx,requests) VALUES(?,?,?,?,?,?,?,?)
+ ON CONFLICT(host_id,ts,site,status,rx_known) DO UPDATE SET rx=rx+excluded.rx,tx=tx+excluded.tx,requests=requests+excluded.requests WHERE typeof(rx)='integer' AND typeof(tx)='integer' AND typeof(requests)='integer' AND rx>=0 AND tx>=0 AND requests>=0 AND rx < 4611686018427387903-tx-excluded.rx-excluded.tx AND requests < 4611686018427387903-excluded.requests`, host, ts, r.Dim1, m.Status, known, r.RX, r.TX, m.Requests); e != nil {
 		return e
+	} else if n, _ := rr.RowsAffected(); n == 0 {
+		return errMetricOverflow
 	}
 	_, e := tx.ExecContext(ctx, `INSERT INTO sites(site,first_seen,last_seen) VALUES(?,?,?) ON CONFLICT(site) DO UPDATE SET first_seen=MIN(first_seen,excluded.first_seen),last_seen=MAX(last_seen,excluded.last_seen)`, r.Dim1, r.TS, r.TS)
 	return e

@@ -1,4 +1,0 @@
-已写入 /var/folders/0m/73w06l7n54nfp1mp8lnl7nl40000gn/T/tmp.ZOXz8TDitO/root/etc/meterly/agent.json
-已写入 /var/folders/0m/73w06l7n54nfp1mp8lnl7nl40000gn/T/tmp.ZOXz8TDitO/root/etc/meterly/agent.json
-已写入 /var/folders/0m/73w06l7n54nfp1mp8lnl7nl40000gn/T/tmp.ZOXz8TDitO/root/etc/meterly/agent.json
-PASS: standalone bundle, explicit version, repeated install, preserved config/token, preflight and HTTP policy

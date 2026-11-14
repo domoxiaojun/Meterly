@@ -17,8 +17,9 @@
 <label id="startLabel" hidden>日期<input name="start" type="date"></label><label id="endLabel" hidden>结束日期<input name="end" type="date"></label>
 <label>主机<select name="host"><option value="all">全部主机</option></select></label>
 <label>趋势粒度<select name="gran"><option value="auto">自动</option><option value="minute">分钟</option><option value="hour">小时</option><option value="day">天</option></select></label>
-<button class="button primary" type="submit">应用筛选</button><span id="timezone" class="muted"></span>
+<div class="filter-meta"><span>选择后自动更新</span><span id="timezone"></span></div><p class="filter-error" data-filter-error role="status" hidden></p>
 </form>
+<div id="analysisFilters" hidden></div>
 <div id="page" aria-live="polite"></div>
 <footer>源站日志、代理载荷与网卡计费口径分别统计。CDN 缓存命中且未回源的请求不计入源站日志。<br><a href="https://db-ip.com/" target="_blank" rel="noopener noreferrer">IP Geolocation by DB-IP</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></footer>
 </main></div>

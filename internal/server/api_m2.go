@@ -66,11 +66,35 @@ func (s *Server) series(r *http.Request, ids []int64, f store.Filter, p period, 
 		if p.To-p.From > 62*86400 {
 			return nil, badRequest{"小时粒度最多 62 天"}
 		}
-		pts, err := s.st.Series(ctx, "fact_hour", ids, f, p.From, p.To)
+		// Interior hours are complete; read partial edge hours from retained minutes.
+		fullFrom, fullTo := (p.From+3599)/3600*3600, p.To/3600*3600
+		pts, err := s.st.Series(ctx, "fact_hour", ids, f, fullFrom, fullTo)
 		if err != nil {
-			return nil, errors.New("内部错误")
+			return nil, err
 		}
-		return fill(pts, p.From, min(p.To, now.Unix()/3600*3600+3600), 3600, nil), nil
+		edges := [][2]int64{}
+		if p.From < min(fullFrom, p.To) {
+			edges = append(edges, [2]int64{p.From, min(fullFrom, p.To)})
+		}
+		if max(fullTo, fullFrom) < p.To {
+			edges = append(edges, [2]int64{max(fullTo, fullFrom), p.To})
+		}
+		for _, edge := range edges {
+			if edge[0] < now.Unix()-int64(s.st.Retention.MinuteDetailHours)*3600 || edge[0]%60 != 0 || edge[1]%60 != 0 {
+				return nil, badRequest{"部分小时的分钟明细不可用，请对齐整点查询"}
+			}
+			minutes, e := s.st.Series(ctx, "fact_minute", ids, f, edge[0], edge[1])
+			if e != nil {
+				return nil, e
+			}
+			point := store.Point{TS: edge[0] / 3600 * 3600}
+			for _, v := range minutes {
+				point.RX = store.AddMetric(point.RX, v.RX)
+				point.TX = store.AddMetric(point.TX, v.TX)
+			}
+			pts = append(pts, point)
+		}
+		return fill(pts, p.From/3600*3600, min(p.To, now.Unix()/3600*3600+3600), 3600, nil), nil
 	case "day":
 		tbl := s.st.TableFor(p.From, now)
 		pts, err := s.st.Series(ctx, tbl, ids, f, p.From, p.To)
@@ -90,8 +114,8 @@ func foldDays(hours []store.Point, loc *time.Location) []store.Point {
 	for _, h := range hours {
 		d := store.DayStart(h.TS, loc)
 		if n := len(out); n > 0 && out[n-1].TS == d {
-			out[n-1].RX += h.RX
-			out[n-1].TX += h.TX
+			out[n-1].RX = store.AddMetric(out[n-1].RX, h.RX)
+			out[n-1].TX = store.AddMetric(out[n-1].TX, h.TX)
 		} else {
 			out = append(out, store.Point{TS: d, Pair: h.Pair})
 		}
@@ -158,8 +182,8 @@ func (s *Server) handleIPDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	var tot store.Pair
 	for _, x := range inb {
-		tot.RX += x.RX
-		tot.TX += x.TX
+		tot.RX = store.AddMetric(tot.RX, x.RX)
+		tot.TX = store.AddMetric(tot.TX, x.TX)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"period": p, "ip": ip, "geo": s.geo.Lookup(ip), "gran": gran,
 		"points": pts, "inbounds": inb, "total": tot})
@@ -241,12 +265,12 @@ func summarizeGeo(rows []store.IPRow, by string, lookup func(string) geo.Info) [
 				g.Top = append(g.Top, row.IP) // rows 已按流量降序
 			}
 		}
-		g.RX += row.RX
-		g.TX += row.TX
+		g.RX = store.AddMetric(g.RX, row.RX)
+		g.TX = store.AddMetric(g.TX, row.TX)
 	}
 	out := make([]geoRow, 0, len(m))
 	for _, g := range m {
-		g.Total = g.RX + g.TX
+		g.Total = store.AddMetric(g.RX, g.TX)
 		out = append(out, *g)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -318,10 +342,10 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		row := reconRow{Host: h.Name, Iface: h.BillingIface, Period: p, IfaceBytes: ifs[h.BillingIface], SingboxFactor: factor}
 		row.IfaceTotal = row.IfaceBytes.Total()
 		for _, v := range sb {
-			row.Singbox.RX += v.RX
-			row.Singbox.TX += v.TX
+			row.Singbox.RX = store.AddMetric(row.Singbox.RX, v.RX)
+			row.Singbox.TX = store.AddMetric(row.Singbox.TX, v.TX)
 		}
-		row.SingboxEst = int64(float64(row.Singbox.Total()) * factor)
+		row.SingboxEst = store.EstimateMetric(float64(row.Singbox.Total()) * factor)
 		if wt, ok := ifs["wt0"]; ok && h.BillingIface != "wt0" {
 			row.NetbirdIface = &wt
 		}
@@ -333,12 +357,15 @@ func (s *Server) handleReconcile(w http.ResponseWriter, r *http.Request) {
 		}
 		known := row.SingboxEst
 		if row.Site != nil {
-			known += row.Site.Total()
+			known = store.AddMetric(known, row.Site.Total())
 		}
 		if row.Netbird != nil {
-			known += row.Netbird.Total()
+			known = store.AddMetric(known, row.Netbird.Total())
 		}
 		row.Unattributed = row.IfaceTotal - known
+		if row.IfaceTotal >= store.MetricLimit || known >= store.MetricLimit {
+			row.Unattributed = store.MetricLimit
+		}
 		row.UnattribPct = store.PctOf(row.Unattributed, row.IfaceTotal)
 		out = append(out, row)
 	}

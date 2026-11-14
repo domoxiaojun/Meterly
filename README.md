@@ -15,6 +15,18 @@ v2 是不兼容升级：仅支持 `/api/v2` 和协议版本 2；中心拒绝打�
 
 核心操作：**指定一天 → 网站 → IP 排行 → IP 详情 → 浏览器返回**。日期和筛选保存在 URL，返回保留查询与滚动位置。历史查询不定时刷新；当前范围自动刷新，并取消已过时的请求。支持深色、浅色、跟随系统和移动端。
 
+项目架构、中心/agent 协议、存储、采集器配置、客户端兼容矩阵、前端及验收要求统一见 [Meterly 开发文档](docs/development.md)，任务进度见 [项目开发计划](plans/development/plan.md)。新前端采用 **React + TypeScript + Vite + Tailwind CSS + shadcn/ui（Base UI）**，已提供六页本地交互预览；生产 Go 嵌入入口仍使用现有面板，完整切换尚未完成。
+
+本地预览（两个终端分别运行）：
+
+```sh
+npm ci
+npm run preview:api  # 终端 1：回环地址上的 Go API，使用独立临时演示数据库
+npm run dev          # 终端 2：打开 http://127.0.0.1:5173
+```
+
+预览显示固定日期的合成数据，支持筛选、钻取、分页、CSV 和主题切换，不连接生产中心。`npm run build` 执行类型检查并生成 `web/dist`；该目录未接入生产 Go embed。UI 主源码位于 [frontend/src](frontend/src)。
+
 ## 统计口径
 
 | 来源 | 字节含义 | 注意事项 |
@@ -87,6 +99,8 @@ agent 启动时及每 5 分钟发现网站和网卡，通过出站 HTTPS 获取�
 
 网站支持 `/etc/nginx`、OpenResty/1Panel 配置及常见日志目录。当前不支持的路径可在本机 `collectors.site.sources` 与 `allow_dirs` 中显式配置。请保留轮转日志直至积压追平；若旧 inode 的文件已删除，无法凭空恢复其尾部，面板会显示采集异常。
 
+sing-box 通过 Clash API `/connections` 采集，每个 agent 当前只支持一个 API 地址。原生 JSON 配置可读取 `experimental.clash_api`；其他配置方式可显式指定 `url` 与 `secret_file`。Mihomo、图形客户端及多实例的支持条件和待验证项见开发文档，不能把“使用 sing-box 内核”直接等同于兼容通过。
+
 CDN 归因、JSON 日志和可信代理配置见 [CDN 与日志配置](docs/cdn.md)。
 
 ## 升级和运行边界
@@ -95,4 +109,4 @@ CDN 归因、JSON 日志和可信代理配置见 [CDN 与日志配置](docs/cdn.
 
 确认升级会短暂重启 agent。备份和升级结果可在系统页查看；任务响应超时可刷新查询现有任务，避免重复操作。
 
-更多接口及完整性说明见 [v2 API](docs/api-v2.md)。本次验证与尚待实际环境验收的边界见 [交付验证记录](plans/full-upgrade/verification.md)。
+更多接口及完整性说明见 [v2 API](docs/api-v2.md)。开发验收标准及尚待安排的工作见 [Meterly 开发文档](docs/development.md)。

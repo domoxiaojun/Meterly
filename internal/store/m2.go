@@ -23,7 +23,7 @@ func (s *Store) Series(ctx context.Context, table string, ids []int64, f Filter,
 		return nil, fmt.Errorf("未知表 %s", table)
 	}
 	in, args := inList(ids)
-	q := fmt.Sprintf(`SELECT ts, SUM(rx), SUM(tx) FROM %s WHERE kind=? AND host_id IN %s AND ts>=? AND ts<?`, table, in)
+	q := fmt.Sprintf(`SELECT ts, metric_sum(rx), metric_sum(tx) FROM %s WHERE kind=? AND host_id IN %s AND ts>=? AND ts<?`, table, in)
 	a := append(append([]any{f.Kind}, args...), from, to)
 	if f.Dim1 != "" {
 		q += ` AND dim1=?`
@@ -55,7 +55,7 @@ func (s *Store) IPInbounds(ctx context.Context, table string, ids []int64, ip st
 		return nil, fmt.Errorf("未知表 %s", table)
 	}
 	in, args := inList(ids)
-	rows, err := s.R.QueryContext(ctx, fmt.Sprintf(`SELECT dim2, SUM(rx), SUM(tx) FROM %s WHERE kind='singbox' AND host_id IN %s AND dim1=? AND ts>=? AND ts<? GROUP BY dim2`, table, in),
+	rows, err := s.R.QueryContext(ctx, fmt.Sprintf(`SELECT dim2, metric_sum(rx), metric_sum(tx) FROM %s WHERE kind='singbox' AND host_id IN %s AND dim1=? AND ts>=? AND ts<? GROUP BY dim2`, table, in),
 		append(args, ip, from, to)...)
 	if err != nil {
 		return nil, err
@@ -223,10 +223,10 @@ func (s *Store) CompareVnstat(ctx context.Context, hostID int64, loc *time.Locat
 				days[k] = d
 			}
 			d.Hours++
-			d.Vnstat.RX += v.RX
-			d.Vnstat.TX += v.TX
-			d.Ours.RX += o.RX
-			d.Ours.TX += o.TX
+			d.Vnstat.RX = AddMetric(d.Vnstat.RX, v.RX)
+			d.Vnstat.TX = AddMetric(d.Vnstat.TX, v.TX)
+			d.Ours.RX = AddMetric(d.Ours.RX, o.RX)
+			d.Ours.TX = AddMetric(d.Ours.TX, o.TX)
 		}
 		for ts, o := range ours {
 			if _, ok := hours[ts]; !ok && o.Total() > 0 && ts+3600 <= now.Unix() {
@@ -240,10 +240,10 @@ func (s *Store) CompareVnstat(ctx context.Context, hostID int64, loc *time.Locat
 			c.MaxAbsPct = max(c.MaxAbsPct, math.Abs(d.Pct))
 			c.Days = append(c.Days, *d)
 			c.Total.Hours += d.Hours
-			c.Total.Vnstat.RX += d.Vnstat.RX
-			c.Total.Vnstat.TX += d.Vnstat.TX
-			c.Total.Ours.RX += d.Ours.RX
-			c.Total.Ours.TX += d.Ours.TX
+			c.Total.Vnstat.RX = AddMetric(c.Total.Vnstat.RX, d.Vnstat.RX)
+			c.Total.Vnstat.TX = AddMetric(c.Total.Vnstat.TX, d.Vnstat.TX)
+			c.Total.Ours.RX = AddMetric(c.Total.Ours.RX, d.Ours.RX)
+			c.Total.Ours.TX = AddMetric(c.Total.Ours.TX, d.Ours.TX)
 		}
 		c.Total.Diff = c.Total.Ours.Total() - c.Total.Vnstat.Total()
 		c.Total.Pct = pctOf(c.Total.Diff, c.Total.Vnstat.Total())
