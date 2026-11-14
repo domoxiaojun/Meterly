@@ -24,7 +24,11 @@ func main() {
 	}
 	defer os.RemoveAll(dir)
 	config := filepath.Join(dir, "config.json")
-	body, _ := json.Marshal(map[string]any{"listen": "127.0.0.1:18787", "db_path": filepath.Join(dir, "db.sqlite"), "tz": "Asia/Singapore", "geo": map[string]any{"auto_update": false}, "maintenance": map[string]any{"backups": false}})
+	tokenFile := filepath.Join(dir, "panel.token")
+	if e := os.WriteFile(tokenFile, []byte("local-browser-test-token"), 0600); e != nil {
+		panic(e)
+	}
+	body, _ := json.Marshal(map[string]any{"listen": "127.0.0.1:18787", "db_path": filepath.Join(dir, "db.sqlite"), "panel_token_file": tokenFile, "trusted_proxies": []string{"127.0.0.1/32"}, "tz": "Asia/Singapore", "geo": map[string]any{"auto_update": false}, "maintenance": map[string]any{"backups": false}})
 	os.WriteFile(config, body, 0600)
 	cfg, e := server.LoadConfig(config)
 	if e != nil {
@@ -75,6 +79,9 @@ func main() {
 				panic(e)
 			}
 		}
+	}
+	if _, e = st.CreateHost(ctx, "pending-host", store.HostOpts{}); e != nil {
+		panic(e)
 	}
 	if _, e = st.W.ExecContext(ctx, `UPDATE ips SET country='CN',country_name='中国',asn=64501,org='Example Mobile CN' WHERE address LIKE '198.51.100.%'`); e != nil {
 		panic(e)

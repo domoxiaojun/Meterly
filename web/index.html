@@ -2,13 +2,14 @@
 <html lang="zh-Hans" data-theme="dark">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light">
-<title>Meterly · 流量分析</title><link rel="stylesheet" href="/style.css">
+<title>Meterly · 流量分析</title><link rel="stylesheet" href="./style.css">
 </head>
 <body>
 <a class="skip-link" href="#content">跳到主要内容</a>
 <div class="shell">
 <aside class="sidebar"><a class="brand" href="#/overview"><span class="brand-mark" aria-hidden="true">M</span><span>Meterly<small>看清流量的去向</small></span></a>
 <nav aria-label="主要导航">
+<a href="/">返回新版工作台</a>
 <a href="#/overview" data-nav="overview">总览</a><a href="#/sites" data-nav="sites">网站</a><a href="#/ips" data-nav="ips">IP 分析</a><a href="#/hosts" data-nav="hosts">主机</a><a href="#/billing" data-nav="billing">对账</a><a href="#/system" data-nav="system">系统</a>
 </nav><div class="sidebar-bottom"><span id="version">Meterly</span><label>外观 <select id="theme" aria-label="外观主题"><option value="system">跟随系统</option><option value="dark">深色</option><option value="light">浅色</option></select></label><button id="logout" class="button quiet">退出登录</button></div></aside>
 <main id="content" tabindex="-1"><header class="page-header"><div><p class="eyebrow">TRAFFIC INTELLIGENCE</p><h1 id="pageTitle">流量总览</h1><p id="pageSubtitle" class="muted">源站日志流量 · 统计到达服务器的请求</p></div><div class="header-actions"><span id="freshness" class="muted" aria-live="polite"></span><button id="refresh" class="button">刷新</button></div></header>
@@ -25,5 +26,5 @@
 </main></div>
 <div id="login" class="login-overlay" hidden><form id="loginForm" class="login-card"><span class="brand-mark" aria-hidden="true">M</span><h1>欢迎使用 Meterly</h1><p class="muted">登录后查看流量与管理采集主机</p><label>面板口令<input id="loginToken" type="password" autocomplete="current-password" required></label><button class="button primary" type="submit">登录</button><p id="loginError" class="error" role="alert"></p></form></div>
 <div id="toast" class="toast" role="status" hidden></div>
-<script src="/vendor/chart.umd.min.js"></script><script type="module" src="/app.js"></script>
+<script src="./vendor/chart.umd.min.js"></script><script type="module" src="./app.js"></script>
 </body></html>

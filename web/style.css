@@ -8,7 +8,7 @@
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 
 /* Shared analysis controls and data alignment. */
-select{appearance:none;-webkit-appearance:none;background-image:url('/chevron-down.svg');background-repeat:no-repeat;background-position:right 12px center;background-size:16px;padding-right:38px;cursor:pointer}
+select{appearance:none;-webkit-appearance:none;background-image:url('./chevron-down.svg');background-repeat:no-repeat;background-position:right 12px center;background-size:16px;padding-right:38px;cursor:pointer}
 label{line-height:1.5;gap:7px}
 input,select{height:40px;line-height:1.5}
 select:disabled{cursor:default}

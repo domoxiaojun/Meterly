@@ -1,7 +1,8 @@
-import {test,expect} from '@playwright/test';
+import {test,expect} from './fixtures.js';
+test.beforeEach(async ({page}) => { const response = await page.request.post('/api/login', {data:{token:'local-browser-test-token'}}); expect(response.ok()).toBeTruthy(); });
 test('date → website → complete IP ranking → detail → back, URL and CSV',async({page})=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto('/');await page.getByRole('link',{name:'网站',exact:true}).click();
+ await page.goto('/legacy/');await page.getByRole('link',{name:'网站',exact:true}).click();
  await page.locator('[name=period]').selectOption('day');await page.locator('[name=start]').fill('2026-11-10');await expect(page).toHaveURL(/start=2026-11-10/);
  await page.locator('tbody').getByRole('link',{name:'example.com',exact:true}).click();await expect(page.getByRole('heading',{name:'客户端 IP 排行'})).toBeVisible();
  await expect(page.locator('.pager')).toContainText('137 条');
@@ -14,7 +15,7 @@ test('date → website → complete IP ranking → detail → back, URL and CSV'
 });
 
 test('IP geography, traffic details and website drill-down preserve the selected IP',async({page})=>{
- await page.goto('/#/ips?period=day&start=2026-11-10');
+ await page.goto('/legacy/#/ips?period=day&start=2026-11-10');
  await expect(page.getByRole('heading',{name:'IP 流量排行'})).toBeVisible();
  await expect(page.getByRole('columnheader',{name:'归属地 / 运营商',exact:true})).toBeVisible();
  await page.getByRole('link',{name:'198.51.100.137',exact:true}).click();
@@ -33,14 +34,14 @@ test('IP geography, traffic details and website drill-down preserve the selected
  await expect(page.getByRole('heading',{name:'客户端 IP 排行'})).toBeVisible();
  await expect(page.locator('.pager')).toContainText('1 条');
  await page.goBack();await expect(page).toHaveURL(detailURL);await expect(page.locator('[name=status]')).toHaveValue('200');
- await page.goto('/#/ips/2001%3Adb8%3A%3A1?period=day&start=2026-11-10');
+ await page.goto('/legacy/#/ips/2001%3Adb8%3A%3A1?period=day&start=2026-11-10');
  await expect(page.locator('.ip-profile')).toContainText('Frankfurt am Main');
  await expect(page.getByRole('link',{name:'ipv6.example.com',exact:true})).toBeVisible();
 });
 
 test('filters apply automatically, validate input and retain focus',async({page})=>{
  const requests=[];page.on('request',r=>{if(r.url().includes('/analytics/rank?'))requests.push(r.url());});
- await page.goto('/#/sites?period=day&start=2026-11-10');await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();
+ await page.goto('/legacy/#/sites?period=day&start=2026-11-10');await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();
  await expect(page.getByRole('button',{name:'应用筛选',exact:true})).toHaveCount(0);
  await page.locator('[name=gran]').selectOption('hour');await expect(page).toHaveURL(/gran=hour/);
  await expect(page.locator('[name=gran]')).toHaveValue('hour');
@@ -60,7 +61,7 @@ test('filters apply automatically, validate input and retain focus',async({page}
  await page.locator('[name=end]').fill('2026-11-09');
  await expect(page.locator('#filters [data-filter-error]')).toContainText('结束日期不能早于开始日期');
  await page.locator('[name=end]').fill('2026-11-11');await expect(page).toHaveURL(/end=2026-11-11/);
- await page.goto('/#/ips?period=day&start=2026-11-10&status=200');
+ await page.goto('/legacy/#/ips?period=day&start=2026-11-10&status=200');
  await page.locator('[name=source]').selectOption('singbox');await expect(page).toHaveURL(/source=singbox/);
  await expect(page.locator('[name=status]')).toHaveCount(0);
  await page.getByRole('link',{name:'198.51.100.7',exact:true}).click();
@@ -71,7 +72,7 @@ test('filters apply automatically, validate input and retain focus',async({page}
 test('desktop and mobile controls align and fit in both themes',async({page})=>{
  for(const width of [1973,1440,375,844]){
   await page.setViewportSize({width,height:width===844?390:950});
-  await page.goto('/#/sites?period=day&start=2026-11-10');await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();
+  await page.goto('/legacy/#/sites?period=day&start=2026-11-10');await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
   for(const theme of ['light','dark']){
    await page.locator('#theme').selectOption(theme);await expect(page.locator('#page')).not.toHaveAttribute('aria-busy','true');
@@ -83,7 +84,7 @@ test('desktop and mobile controls align and fit in both themes',async({page})=>{
   }
  }
  await page.emulateMedia({reducedMotion:'reduce'});
- await page.setViewportSize({width:1440,height:1000});await page.goto('/#/ips/198.51.100.137?period=day&start=2026-11-10');
+ await page.setViewportSize({width:1440,height:1000});await page.goto('/legacy/#/ips/198.51.100.137?period=day&start=2026-11-10');
  await expect(page.getByRole('heading',{name:'网站流量详情'})).toBeVisible();
  const ticks=await page.locator('#trend').evaluate(canvas=>window.Chart.getChart(canvas).scales.x.ticks.map(t=>t.value));
  expect(ticks.length).toBeGreaterThan(1);expect(ticks.every(t=>t%3600000===0)).toBeTruthy();
@@ -92,30 +93,30 @@ test('desktop and mobile controls align and fit in both themes',async({page})=>{
 test('abort obsolete requests and retry errors',async({page})=>{
  let failed=false;
  await page.route('**/api/v2/analytics/rank?**',async route=>{if(!failed){failed=true;return route.fulfill({status:503,contentType:'application/json',body:'{"error":"临时测试错误"}'});}return route.continue();});
- await page.goto('/#/sites?period=day&start=2026-11-10');await expect(page.getByText('临时测试错误')).toBeVisible();await page.getByRole('button',{name:'重试',exact:true}).click();await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();
+ await page.goto('/legacy/#/sites?period=day&start=2026-11-10');await expect(page.getByText('临时测试错误')).toBeVisible();await page.getByRole('button',{name:'重试',exact:true}).click();await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();
  await page.route('**/api/v2/analytics/rank?**',async route=>{if(route.request().url().includes('2026-11-09')){try{const response=await route.fetch();const data=await response.json();data.rows[0].key='stale.test';await new Promise(r=>setTimeout(r,300));await route.fulfill({response,json:data});}catch{}return;}try{await route.continue();}catch{}});
  await page.evaluate(()=>{location.hash='/sites?period=day&start=2026-11-09'});await page.waitForTimeout(50);await page.evaluate(()=>{location.hash='/sites?period=day&start=2026-11-10'});await expect(page.locator('[name=start]')).toHaveValue('2026-11-10');await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();await page.waitForTimeout(400);await expect(page.locator('#page')).not.toContainText('stale.test');
 });
 test('mobile, theme, actual interfaces and system',async({page})=>{
- await page.setViewportSize({width:390,height:844});await page.goto('/#/sites?period=day&start=2026-11-10');await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();
+ await page.setViewportSize({width:390,height:844});await page.goto('/legacy/#/sites?period=day&start=2026-11-10');await expect(page.getByRole('heading',{name:'网站排行'})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBeTruthy();
  await page.locator('#theme').selectOption('light');await expect(page.locator('html')).toHaveAttribute('data-theme','light');
- await page.goto('/#/hosts/server-a?period=day&start=2026-11-10');await expect(page.locator('[data-iface]')).toHaveValue('ens3');await expect(page.locator('[data-iface] option')).toHaveText(['ens3','ens4']);
- await page.goto('/#/system');await expect(page.getByRole('heading',{name:'接入新主机'})).toBeVisible();await page.screenshot({path:'test-results/mobile-system.png',fullPage:true});
- await page.locator('#theme').selectOption('dark');await page.setViewportSize({width:1440,height:1000});await page.goto('/#/sites/example.com?period=day&start=2026-11-10');await expect(page.getByRole('heading',{name:'客户端 IP 排行'})).toBeVisible();await page.screenshot({path:'test-results/site-detail.png',fullPage:true});
+ await page.goto('/legacy/#/hosts/server-a?period=day&start=2026-11-10');await expect(page.locator('[data-iface]')).toHaveValue('ens3');await expect(page.locator('[data-iface] option')).toHaveText(['ens3','ens4']);
+ await page.goto('/legacy/#/system');await expect(page.getByRole('heading',{name:'接入新主机'})).toBeVisible();await page.screenshot({path:'test-results/mobile-system.png',fullPage:true});
+ await page.locator('#theme').selectOption('dark');await page.setViewportSize({width:1440,height:1000});await page.goto('/legacy/#/sites/example.com?period=day&start=2026-11-10');await expect(page.getByRole('heading',{name:'客户端 IP 排行'})).toBeVisible();await page.screenshot({path:'test-results/site-detail.png',fullPage:true});
 });
 
 test('zero, uncollected and expired remain distinct',async({page})=>{
- await page.goto('/#/ips?period=day&start=2026-11-10&ip=192.0.2.255');await expect(page.getByText('当前筛选暂无流量',{exact:true})).toBeVisible();
- await page.goto('/#/sites/unknown.test?period=day&start=2026-11-10');await expect(page.locator('.notice strong')).toHaveText('尚未采集');
- await page.goto('/#/ips?period=day&start=2025-01-01');await expect(page.getByText('明细已过期',{exact:true})).toBeVisible();
+ await page.goto('/legacy/#/ips?period=day&start=2026-11-10&ip=192.0.2.255');await expect(page.getByText('当前筛选暂无流量',{exact:true})).toBeVisible();
+ await page.goto('/legacy/#/sites/unknown.test?period=day&start=2026-11-10');await expect(page.locator('.notice strong')).toHaveText('尚未采集');
+ await page.goto('/legacy/#/ips?period=day&start=2025-01-01');await expect(page.getByText('明细已过期',{exact:true})).toBeVisible();
 });
 
 test('host filter controls list and server online state; detail route takes precedence',async({page})=>{
- await page.goto('/#/hosts?host=all');await expect(page.locator('.host-panel')).toHaveCount(2);
- await expect(page.locator('.host-panel .section-title .badge')).toHaveText(['在线','在线']);
+ await page.goto('/legacy/#/hosts?host=all');await expect(page.locator('.host-panel')).toHaveCount(3);
+ await expect(page.locator('.host-panel .section-title .badge')).toHaveText(['离线','在线','在线']);
  await page.locator('[name=host]').selectOption('server-a');await expect(page.locator('.host-panel')).toHaveCount(1);
  await expect(page.locator('.host-panel > .section-title h2')).toHaveText('server-a');await page.reload();await expect(page.locator('.host-panel')).toHaveCount(1);
- await page.goto('/#/hosts/server-b?host=server-a');await expect(page.locator('.host-panel > .section-title h2')).toHaveText('server-b');
- await page.goto('/#/hosts?host=missing');await expect(page.getByRole('heading',{name:'当前筛选没有主机'})).toBeVisible();
+ await page.goto('/legacy/#/hosts/server-b?host=server-a');await expect(page.locator('.host-panel > .section-title h2')).toHaveText('server-b');
+ await page.goto('/legacy/#/hosts?host=missing');await expect(page.getByRole('heading',{name:'当前筛选没有主机'})).toBeVisible();
 });

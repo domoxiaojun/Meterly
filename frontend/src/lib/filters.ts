@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from './validation'
 
 const filterSchema = z.object({
   period: z.enum(['today', 'yesterday', 'last7d', 'last30d', 'day', 'custom']).catch('last7d'),

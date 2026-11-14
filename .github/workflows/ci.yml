@@ -13,6 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Build embedded frontend
+        run: npm ci && npm run build
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -30,13 +36,8 @@ jobs:
           scripts/build.sh
           scripts/install-agent.sh --center http://127.0.0.1:8787 --allow-http --dry-run --binary ./build/meterly-agent
           scripts/install-agent_test.sh
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
       - name: Browser and module tests
         run: |
-          npm ci
           npx playwright install --with-deps chromium
           npm test
           npm run test:browser

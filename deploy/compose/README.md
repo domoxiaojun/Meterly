@@ -11,7 +11,7 @@ docker compose up -d --no-build server
 
 `pull_policy: always` 会在 Compose 启动服务时检查并拉取镜像；它不会自动更新已运行的容器，仍需执行上述更新命令。需要固定版本时，将 `METERLY_VERSION` 改为已发布的 `vX.Y.Z` 标签。更新前保留一致性数据库备份及原镜像版本，更新后检查服务健康状态。
 
-当前新 React 前端仍为本地预览，尚未接入生产 Go embed 和镜像构建；`latest` 继续包含现有生产面板。
+镜像内先由 Node 22 安装锁定依赖并构建 React，再嵌入 Go 二进制；运行镜像不含 Node。新版工作台位于 `/`，经典管理操作保留在 `/legacy/`，二者使用相同 API 和会话。
 
 - `server.json` 默认使用全新 `/data/meterly-v2.db`。已有旧库应先按 [切换说明](../../docs/migrate.md) 归档，不能继续使用旧库结构。
 - 中心不再依赖旧 backup timer。切换前停用宿主机 `meterly-backup.timer`，新中心在自身时区每天 04:20 调度备份，保留 7 份。

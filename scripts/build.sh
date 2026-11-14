@@ -10,6 +10,11 @@ DATE=${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 LDFLAGS="-s -w -buildid= -X github.com/domoxiaojun/Meterly/internal/version.Version=$VERSION -X github.com/domoxiaojun/Meterly/internal/version.Commit=$COMMIT -X github.com/domoxiaojun/Meterly/internal/version.Date=$DATE"
 export CGO_ENABLED=0
 case "${1:-build}" in
+  build|dist)
+    npm ci
+    npm run build;;
+esac
+case "${1:-build}" in
   build)
     mkdir -p build
     for b in meterly-agent meterly-server mockclash demoseed; do

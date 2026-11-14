@@ -1,4 +1,5 @@
-# 构建上下文只需要 go.mod/go.sum、cmd、internal、web 与 deploy/compose/server.json
+# 前端由镜像内 Node 阶段从源码构建，不使用本机产物或依赖。
+/web/dist
 .git
 build
 dist

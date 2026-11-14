@@ -10,17 +10,21 @@ GOFLAGS := -trimpath
 BINS    := meterly-agent meterly-server
 ARCHS   := amd64 arm64
 
-.PHONY: all build dist test test-short vet clean checksums
+.PHONY: all frontend build dist test test-short vet clean checksums
 
 all: build
 
-build:
+frontend:
+	npm ci
+	npm run build
+
+build: frontend
 	@mkdir -p build
 	@for b in $(BINS) mockclash demoseed; do \
 	  CGO_ENABLED=0 go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o build/$$b ./cmd/$$b || exit 1; done
 	@echo "已构建 build/ ($(VERSION))"
 
-dist:
+dist: frontend
 	@mkdir -p dist
 	@for a in $(ARCHS); do for b in $(BINS); do \
 	  echo "→ dist/$$b-linux-$$a"; \
@@ -31,7 +35,7 @@ dist:
 checksums:
 	@cd dist && sha256sum meterly-* | grep -v SHA256SUMS > SHA256SUMS && cat SHA256SUMS
 
-vet:
+vet: frontend
 	go vet ./...
 
 test: vet

@@ -13,11 +13,11 @@ Meterly 面向 1–20 台主机、100 个以内网站，回答“哪一天、哪
 | 中心与存储 | Go 中心、SQLite 文件、协议 v2、数据库 schema 4 | 保持统计语义，补全发布门槛与恢复验证 |
 | 采集端 | Linux agent 出站上报、配置同步、受控升级 | 验证实际采集器、断网恢复及升级状态 |
 | 代理内核接入 | 一个 agent 对接一个 Clash API；另有 NetBird 与 Xray 采集器 | sing-box 实机验证、兼容端适配、多实例设计 |
-| 前端 | 生产 ES Modules/Chart.js；本地 React/TypeScript/Tailwind/shadcn 六页预览 | 完成登录/管理写操作、全量回归和 Go embed 切换 |
-| 部署 | 静态面板嵌入 Go 二进制 | 构建后的新面板继续嵌入 Go |
+| 前端 | React/TypeScript/Tailwind/shadcn 为默认入口；生产登录、真实 API、Go embed 已接入 | 管理写操作由 `/legacy/` 保留，后续逐步迁入 React |
+| 部署 | Vite 产物嵌入 Go；CI、Release 和镜像自动构建 | 保持资源与二进制同版本 |
 | 验证 | Go 测试、Node 单测、Playwright | 迁移时保留业务覆盖，增加类型与组件检查 |
 
-**新前端已完成本地交互预览，生产入口尚未切换。** 预览包含总览、网站/IP 列表与详情、主机、对账、系统六个页面，使用独立合成数据和实际 Go API。登录、管理写操作、完整边界回归、发布流程及 Go embed 集成仍属于后续迁移，不能把预览当作已部署版本。
+**新前端已接入生产默认入口。** 六页查询使用真实同源 API，登录/退出沿用 HttpOnly 会话；会话失效会清理数据并返回登录。时区、版本和时钟来自 `/api/v2/me`。开发演示仅由 Vite `demo` 模式显式标记，生产不请求 `/api/preview`。主机配置/升级、服务商读数、注册码及维护写操作暂保留 `/legacy/` 入口，共享原有服务端校验；不把这些操作记作已迁入 React。生产接入计划见 [对应计划](../plans/frontend-production/plan.md)。
 
 ## 2. 架构与职责
 
@@ -378,10 +378,11 @@ Go 版本以 [go.mod](../go.mod) 为准。当前面板入口由 [web/embed.go](.
 
 ```sh
 npm ci
+npm run build
 go run ./tests/ui-server
 ```
 
-第二条命令启动回环地址 `127.0.0.1:18787` 上的受控 UI 夹具，使用临时 SQLite 文件与测试数据，适合检查当前页面。退出后可运行以下测试：
+第二条命令启动回环地址 `127.0.0.1:18787` 上的受控 UI 夹具，使用临时 SQLite 文件与测试数据，适合检查内嵌生产页面。测试面板口令为 `local-browser-test-token`，仅用于独立回环夹具，不能用于部署。退出后可运行以下测试：
 
 ```sh
 npm test
@@ -406,18 +407,18 @@ Playwright 首次准备浏览器可运行 `npx playwright install chromium`。[�
 
 | 命令 | 目标职责 | 当前状态 |
 |---|---|---|
-| `npm run dev` | Vite 开发服务器，目前代理本地演示 Go API | 已有；生产登录流程待迁移 |
+| `npm run dev` | Vite demo 模式，代理本地演示 Go API | 已有；显式演示标记 |
 | `npm run typecheck` | TypeScript 检查 | 已有 |
 | `npm run lint` | 项目静态检查，默认不自动修复 | 待新增 |
-| `npm run build` | `frontend/` → `web/dist/` | 已有；尚未接入 Go embed/发布脚本 |
+| `npm run build` | `frontend/` → `web/dist/`，复制经典管理资源 | 已接入 Go embed、脚本、CI、Release 与镜像 |
 | `npm test` | 路由、数据格式化等单元回归 | 已有；迁移时适配新源码 |
-| `npm run test:browser` | 验证 Go 实际提供的构建产物 | 已有；目前验证旧面板 |
+| `npm run test:browser` | 构建后启动带真实登录的 Go 夹具 | 覆盖 React 生产页与经典管理页 |
 
 Vite 代理应覆盖登录、退出和 `/api/v2` 请求，沿用同源会话行为；开发环境也不绕过鉴权。
 
 ## 10. 目标工程结构
 
-以下为完整迁移结构，其中 `frontend/src`、根工程配置与 `web/dist` 预览产物已落地；细分 feature/routes、生产登录与构建切换继续按任务推进。`frontend` 保存开发源码，`web/dist` 保存生成产物并由 Git 忽略；旧面板在切换完成前保持可运行。
+以下为完整迁移结构，其中 `frontend/src`、根工程配置、生产会话与 `web/dist` 构建已落地；细分 feature/routes 与管理写操作迁移继续按任务推进。`frontend` 保存开发源码，`web/dist` 保存生成产物并由 Git 忽略；旧面板通过 `web/dist/legacy` 保持管理操作可用。
 
 ```text
 components.json
@@ -526,19 +527,19 @@ tests/
 
 ## 14. 构建与交付
 
-目标构建顺序：**安装锁定依赖 → 类型/lint 检查 → Vite 静态产物 → Go embed → 二进制或版本包**。生产不需要 Node；页面、图表和必要字体等运行资源随中心提供。
+当前构建顺序：**安装锁定依赖 → 类型检查 → Vite 静态产物 → Go embed → 二进制或版本包**；独立 lint 仍待补充。生产不需要 Node；页面、图表和必要字体等运行资源随中心提供。
 
 1. Vite 输入为 `frontend/`，输出为 `web/dist/`；配置 TS、Vite 和 shadcn 的一致别名。清理产物不能误删 `web/embed.go` 或旧面板源码。
 2. Go 通过子文件系统把 `dist` 作为静态根，正确加载 `/` 及资源路径；API 路由继续独立处理。
 3. 本地脚本、浏览器夹具和发布流程在 Go 构建前生成前端。缺产物明确失败；从干净检出验证，不依赖开发机遗留的 `dist`。
-4. 产物是否入库在工程接入时确定并写入构建约定；正式构建始终使用可复现入口，不临时运行组件生成器。
-5. 六页和关键行为通过后统一切换，确认无引用再移除旧 ES Modules、CSS 和 Chart.js。Vite 开发页可运行不等于 Go 嵌入产物已通过。
+4. `web/dist` 不入库。Dockerfile 的 Node 阶段从锁文件与源码生成前端，再复制到 Go 阶段；本机产物和依赖不进入构建上下文。脚本、Makefile 和 CI 在 Go 编译前执行前端构建，不临时运行组件生成器。
+5. `/` 已切换到 React，旧 ES Modules、CSS 和 Chart.js 复制至 `legacy/` 以保留尚未迁移的管理写操作；未完成迁移前不可删除。新面板使用 Zod jitless 模式，兼容现有禁止 eval 的 CSP。
 
 部署方式、安装包与运行操作见 [README](../README.md)、[部署模板说明](../deploy/compose/README.md)。旧版切换见 [版本切换说明](migrate.md)，源站日志和代理归因见 [日志接入说明](cdn.md)。这些是仍有效的操作参考。
 
 ## 15. 实施顺序与验收
 
-实施按 [plan.md](../plans/development/plan.md) 推进，完成一项并通过最小必要验证后标记 ✅。项目分为客户端实机验证、后端/发布恢复完善、前端迁移三条工作线。开发文档、dmitco API 试点及六页本地前端预览已经完成；完整迁移继续按工程基础 → 共享状态与布局 → 分析三页 → 管理三页 → Go 构建集成 → 最终切换逐项验收，不能把预览通过替代生产切换。
+实施按 [plan.md](../plans/development/plan.md) 推进，完成一项并通过最小必要验证后标记 ✅。项目分为客户端实机验证、后端/发布恢复完善、前端迁移三条工作线。开发文档、dmitco API 试点、六页预览以及新前端生产构建接入已经完成；管理写操作的 React 迁移、独立 lint 和剩余边界行为继续按项目计划逐项验收。
 
 | 改动范围 | 最小必要验证 |
 |---|---|

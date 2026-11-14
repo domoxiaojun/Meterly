@@ -1,6 +1,6 @@
 # Meterly v2
 
-用一个 Go 中心和轻量 agent，查看 **哪一天、哪个网站、哪个客户端 IP 使用了多少源站流量**。适用于 1–20 台主机、100 个以内网站。中心使用 SQLite 文件；面板、ES Modules 和 Chart.js 内嵌在二进制中，部署不需要 Node 或数据库服务。
+用一个 Go 中心和轻量 agent，查看 **哪一天、哪个网站、哪个客户端 IP 使用了多少源站流量**。适用于 1–20 台主机、100 个以内网站。中心使用 SQLite 文件；React 工作台及其资源内嵌在二进制中，部署不需要 Node 或数据库服务。
 
 v2 是不兼容升级：仅支持 `/api/v2` 和协议版本 2；中心拒绝打开旧结构数据库，agent 拒绝读取旧状态。旧库归档、新版本启用和生产部署须另行操作，参见 [旧版切换说明](docs/migrate.md)。
 
@@ -15,7 +15,7 @@ v2 是不兼容升级：仅支持 `/api/v2` 和协议版本 2；中心拒绝打�
 
 核心操作：**指定一天 → 网站 → IP 排行 → IP 详情 → 浏览器返回**。日期和筛选保存在 URL，返回保留查询与滚动位置。历史查询不定时刷新；当前范围自动刷新，并取消已过时的请求。支持深色、浅色、跟随系统和移动端。
 
-项目架构、中心/agent 协议、存储、采集器配置、客户端兼容矩阵、前端及验收要求统一见 [Meterly 开发文档](docs/development.md)，任务进度见 [项目开发计划](plans/development/plan.md)。新前端采用 **React + TypeScript + Vite + Tailwind CSS + shadcn/ui（Base UI）**，已提供六页本地交互预览；生产 Go 嵌入入口仍使用现有面板，完整切换尚未完成。
+项目架构、中心/agent 协议、存储、采集器配置、客户端兼容矩阵、前端及验收要求统一见 [Meterly 开发文档](docs/development.md)，任务进度见 [项目开发计划](plans/development/plan.md)。新前端采用 **React + TypeScript + Vite + Tailwind CSS + shadcn/ui（Base UI）**，已作为生产默认入口，使用中心真实 API、面板登录与 HttpOnly 会话。主机配置/升级、服务商读数和系统维护暂通过各页按钮进入 `/legacy/` 经典管理页，与新版共用数据和登录状态。
 
 本地预览（两个终端分别运行）：
 
@@ -25,7 +25,7 @@ npm run preview:api  # 终端 1：回环地址上的 Go API，使用独立临时
 npm run dev          # 终端 2：打开 http://127.0.0.1:5173
 ```
 
-预览显示固定日期的合成数据，支持筛选、钻取、分页、CSV 和主题切换，不连接生产中心。`npm run build` 执行类型检查并生成 `web/dist`；该目录未接入生产 Go embed。UI 主源码位于 [frontend/src](frontend/src)。
+预览显示固定日期的合成数据，支持筛选、钻取、分页、CSV 和主题切换，不连接生产中心。`npm run build` 执行类型检查并生成 `web/dist`；该目录由 Go embed 嵌入，包含新版入口及 `legacy/` 管理资源。UI 主源码位于 [frontend/src](frontend/src)。
 
 ## 统计口径
 
@@ -43,17 +43,18 @@ UTC 存储，网站/IP 分析日期统一按中心时区（默认 `Asia/Singapor
 ## 构建与验证
 
 ```sh
-scripts/build.sh                 # 本机二进制
+scripts/build.sh                 # npm ci + 前端构建 + 本机二进制
 scripts/build.sh dist            # Linux amd64/arm64 二进制、完整版本包和 SHA256SUMS
 go vet ./...
 go test -race -count=1 ./...
-npm ci                          # 仅开发/测试面板时需要
 npx playwright install chromium
 npm test
 npm run test:browser
 scripts/install-agent_test.sh
 scripts/check-deploy.sh
 ```
+
+从源码构建需要 Node 22、npm 和 Go；若直接执行 `go build`、`go test` 或 `go vet`，先运行 `npm ci && npm run build`。CI、Release 与镜像均自动按此前后顺序构建，生产运行仍不需要 Node。
 
 完整包名为 `meterly-linux-amd64.tar.gz` / `meterly-linux-arm64.tar.gz`，包含中心、agent、systemd units、配置模板和安装器。原有二进制资产继续提供给独立更新器。测试使用临时 SQLite 文件、回环 HTTP/TLS 和模拟 systemctl，无需数据库服务或 Docker。
 
@@ -81,7 +82,7 @@ sudo systemctl enable --now meterly-server.service
 
 ## 接入 agent
 
-1. 在系统页填写主机名及 HTTPS 接入地址，生成一次性注册码。
+1. 在系统页点击「管理注册码与维护任务」，填写主机名及 HTTPS 接入地址，生成一次性注册码。
 2. 把注册码保存为权限 `600` 的 `enroll.code`，下载并检查安装器。
 3. 执行以下指令；将 `vX.Y.Z` 换成已经发布的目标正式版本。
 

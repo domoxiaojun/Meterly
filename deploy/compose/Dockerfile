@@ -5,6 +5,15 @@
 
 ARG GO_VERSION=1.27
 
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY frontend ./frontend
+COPY web ./web
+COPY tsconfig.json vite.config.ts ./
+RUN npm run build
+
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
 # hadolint ignore=DL3018
 RUN apk add --no-cache ca-certificates
@@ -14,6 +23,7 @@ RUN go mod download && go mod verify
 COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
+COPY --from=frontend /src/web/dist ./web/dist
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG VERSION=dev

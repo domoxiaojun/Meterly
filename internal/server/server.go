@@ -314,7 +314,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": version.Version, "tz": s.cfg.TZ,
-		"auth": s.cfg.panelToken != ""})
+		"auth": s.cfg.panelToken != "", "now": s.Now().Unix()})
 }
 
 // RunMaintenance 周期执行保留与 Top-N 合并。
