@@ -1,6 +1,17 @@
 # v2 部署模板
 
-本目录为已有容器环境保留部署模板。开发和测试不需要 Docker，单二进制 systemd 安装见 [主说明](../../README.md)。本次实现未启动容器或操作生产。
+本目录为已有容器环境保留部署模板。开发和测试不需要 Docker，单二进制 systemd 安装见 [主说明](../../README.md)。
+
+中心默认使用 `ghcr.io/domoxiaojun/meterly-server:latest`。在部署主机的 `.env` 中设置 `METERLY_VERSION=latest`；每次推送 `main` 后，GitHub Actions 的 Docker 工作流会构建并发布 `latest` 和对应的 `sha-*` 标签（linux/amd64、linux/arm64）。确认工作流成功后，在已有容器环境的本目录执行：
+
+```sh
+docker compose pull server
+docker compose up -d --no-build server
+```
+
+`pull_policy: always` 会在 Compose 启动服务时检查并拉取镜像；它不会自动更新已运行的容器，仍需执行上述更新命令。需要固定版本时，将 `METERLY_VERSION` 改为已发布的 `vX.Y.Z` 标签。更新前保留一致性数据库备份及原镜像版本，更新后检查服务健康状态。
+
+当前新 React 前端仍为本地预览，尚未接入生产 Go embed 和镜像构建；`latest` 继续包含现有生产面板。
 
 - `server.json` 默认使用全新 `/data/meterly-v2.db`。已有旧库应先按 [切换说明](../../docs/migrate.md) 归档，不能继续使用旧库结构。
 - 中心不再依赖旧 backup timer。切换前停用宿主机 `meterly-backup.timer`，新中心在自身时区每天 04:20 调度备份，保留 7 份。

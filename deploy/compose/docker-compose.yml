@@ -1,7 +1,7 @@
 # Meterly 中心(docker compose,推荐方式)。在 deploy/compose/ 目录执行:
 #   cp .env.example .env && 编辑 .env
 #   mkdir -p secrets && ( umask 077; openssl rand -base64 32 > secrets/panel_token ) && sudo chown 65532:65532 secrets/panel_token
-#   docker compose build && docker compose up -d
+#   docker compose pull server && docker compose up -d --no-build server
 #   docker compose --profile caddy up -d        # 需要 TLS 反代时
 # 默认只把端口发布到宿主 127.0.0.1;要让 agent 推送,把 METERLY_BIND 改成宿主的 NetBird 地址(如 100.66.x.x),不要用 0.0.0.0。
 name: meterly
@@ -9,11 +9,12 @@ name: meterly
 services:
   server:
     image: ghcr.io/domoxiaojun/meterly-server:${METERLY_VERSION:-latest}
+    pull_policy: always
     build:
       context: ../..
       dockerfile: deploy/compose/Dockerfile
       args:
-        VERSION: ${METERLY_VERSION}
+        VERSION: ${METERLY_VERSION:-latest}
         COMMIT: ${METERLY_COMMIT:-none}
         DATE: ${METERLY_BUILD_DATE:-unknown}
     restart: unless-stopped
