@@ -251,7 +251,12 @@ func (a *Agent) Tick(ctx context.Context) (int, error) {
 		a.st.Singbox = a.sb.St
 	}
 	if a.site != nil && a.buf.Size() > a.cfg.BufferMaxBytes*3/4 {
-		a.markErr("site", now, errors.New("缓冲积压，暂缓读取日志；请保留轮转文件直到追平"))
+		h := a.health["site"]
+		if h.Backlogged < 1 {
+			h.Backlogged = 1
+		}
+		h.Note = "缓冲积压，暂缓读取日志；请保留轮转文件直到追平"
+		a.health["site"] = h
 	} else if a.site != nil {
 		got, st, err := a.site.Collect()
 		if err != nil {
@@ -262,6 +267,9 @@ func (a *Agent) Tick(ctx context.Context) (int, error) {
 				a.markErr("site", now, fmt.Errorf("解析失败 %d 行，客户端 IP 待识别 %d 行", st.Failed, st.Unresolved))
 			}
 		}
+		h := a.health["site"]
+		h.Backlogged = st.Backlogged
+		a.health["site"] = h
 		for _, c := range got {
 			add(c, prevTick)
 		}

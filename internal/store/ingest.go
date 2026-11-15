@@ -248,7 +248,7 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 		if !health.Enabled {
 			continue
 		}
-		if health.LastOK > 0 {
+		if health.LastOK > 0 && health.Backlogged == 0 {
 			if _, err = tx.ExecContext(ctx, `INSERT INTO collection_coverage(host_id,kind,first_ts,last_ts) VALUES(?,?,?,?) ON CONFLICT(host_id,kind) DO UPDATE SET last_ts=MAX(last_ts,excluded.last_ts)`, h.ID, kind, health.LastOK, health.LastOK); err != nil {
 				return res, err
 			}
@@ -290,7 +290,7 @@ func (s *Store) Ingest(ctx context.Context, h *Host, loc *time.Location, meta pr
 				src.Site = "unidentified:" + h.Name + ":" + src.Site
 			}
 			if src.Site != "" {
-				if health := meta.Collectors["site"]; !src.Disabled && src.Available && health.LastOK > 0 {
+				if health := meta.Collectors["site"]; !src.Disabled && src.Available && health.LastOK > 0 && health.Backlogged == 0 {
 					if _, err = tx.ExecContext(ctx, `INSERT INTO source_coverage(host_id,site,first_ts,last_ts) VALUES(?,?,?,?) ON CONFLICT(host_id,site) DO UPDATE SET last_ts=MAX(last_ts,excluded.last_ts)`, h.ID, src.Site, health.LastOK, health.LastOK); err != nil {
 						return res, err
 					}
