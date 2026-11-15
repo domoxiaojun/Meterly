@@ -20,7 +20,7 @@ export async function request<T>(path: string, schema: z.ZodType<T>, signal?: Ab
 export function useAPI<T>(path: string, schema: z.ZodType<T>) {
   const period = new URL(path, 'http://meterly.invalid').searchParams.get('period')
   const historical = ['day', 'custom', 'yesterday', 'previous'].includes(period || '')
-  return useQuery({ queryKey: ['meterly', path], queryFn: ({ signal }) => request(path, schema, signal), staleTime: 30_000, refetchInterval: historical ? false : 30_000, retry: false, refetchOnWindowFocus: false })
+  return useQuery({ queryKey: ['meterly', path], queryFn: ({ signal }) => request(path, schema, signal), staleTime: 30_000, refetchInterval: (query) => { const live = (query.state.data as {meta?: {live?: boolean}}|undefined)?.meta?.live; return live === true ? 30_000 : live === false ? false : historical ? false : 30_000 }, retry: false, refetchOnWindowFocus: false })
 }
 export function query(values: Record<string, string | number | undefined>) {
   return new URLSearchParams(Object.entries(values).filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => [key, String(value)])).toString()
