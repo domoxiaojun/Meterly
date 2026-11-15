@@ -19,7 +19,7 @@ import { OverviewPage, AnalysisPage, QueryState } from '@/components/meterly/ana
 import { BillingPage, HostsPage, SystemPage } from '@/components/meterly/management'
 import { useAPI } from '@/lib/api'
 import { optionsSchema, overviewSchema, type Options } from '@/lib/models'
-import { parseFilters, href, validateFilters, periodLabels, type Filters } from '@/lib/filters'
+import { parseFilters, href, validateFilters, periodLabels, normalizeFilters, type Filters } from '@/lib/filters'
 import { cn } from '@/lib/utils'
 import { useSession, LogoutButton } from '@/lib/session'
 import { dateLabel, calendarDate } from '@/lib/format'
@@ -93,7 +93,7 @@ export default function App() {
   const route = useRouterState({ select: state => state.location })
   const { demo, now, tz } = useSession()
   const path = route.pathname === '/overview' ? '/' : route.pathname, basePath = '/' + path.split('/')[1]
-  const filter = parseFilters(route.search)
+  const filter = normalizeFilters(path, parseFilters(route.search))
   const options = useAPI('/api/v2/analytics/options', optionsSchema)
   const overview = useAPI('/api/v2/overview?period=last7d', overviewSchema)
   const onChange = (patch: Partial<Filters>) => { window.location.hash = href(path, filter, patch).slice(1) }
