@@ -26,6 +26,7 @@ import (
 
 type Agent struct {
 	mu      sync.Mutex
+	flushMu sync.Mutex
 	cfg     *Config
 	buf     *Buffer
 	st      *State
@@ -362,9 +363,8 @@ func truncate(s string, n int) string {
 	return s
 }
 
-func (a *Agent) meta(buffered int64) proto.Meta {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+// metaLocked 组装上报元数据。调用方必须已持有 a.mu。
+func (a *Agent) metaLocked(buffered int64) proto.Meta {
 	hn, _ := os.Hostname()
 	h := make(map[string]proto.CollectorHealth, len(a.health))
 	for k, v := range a.health {
@@ -394,35 +394,49 @@ func localTZ() string {
 // ErrUnauthorized token 无效或已吊销,不应频繁重试。
 var ErrUnauthorized = errors.New("中心拒绝:token 无效或已吊销")
 
+// snapshotBatch 在 a.mu 下读取待发记录、剩余条数和健康元数据。
+// 锁在返回前释放，调用方在锁外发送。
+func (a *Agent) snapshotBatch() (proto.Batch, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	recs, err := a.buf.Pending(a.cfg.BatchSize)
+	if err != nil {
+		return proto.Batch{}, err
+	}
+	left := a.buf.Count() - int64(len(recs))
+	return proto.Batch{Meta: a.metaLocked(left), Records: recs}, nil
+}
+
 // Flush 把缓冲分批推送(每次最多 maxBatches 批),返回已确认条数。
 func (a *Agent) Flush(ctx context.Context, maxBatches int) (int, error) {
+	a.flushMu.Lock()
+	defer a.flushMu.Unlock()
 	sent := 0
 	for i := 0; i < maxBatches; i++ {
-		recs, err := a.buf.Pending(a.cfg.BatchSize)
+		batch, err := a.snapshotBatch()
 		if err != nil {
 			return sent, err
 		}
-		if len(recs) == 0 {
+		if len(batch.Records) == 0 {
 			if sent == 0 {
-				_, err = a.post(ctx, proto.Batch{Meta: a.meta(0), Records: []proto.Record{}})
+				_, err = a.post(ctx, batch)
 			}
 			return sent, err
 		}
-		left := a.buf.Count() - int64(len(recs))
-		ir, err := a.post(ctx, proto.Batch{Meta: a.meta(left), Records: recs})
+		ir, err := a.post(ctx, batch)
 		if err != nil {
 			return sent, err
 		}
-		if ir.MaxSeq < recs[len(recs)-1].Seq {
+		if ir.MaxSeq < batch.Records[len(batch.Records)-1].Seq {
 			return sent, errors.New("中心未确认完整序列，保留缓冲")
 		}
 		if ir.Rejected > 0 {
 			a.log.Error("中心拒绝了记录", "count", ir.Rejected)
 		}
-		if err := a.buf.Ack(recs[len(recs)-1].Seq); err != nil {
+		if err := a.buf.Ack(batch.Records[len(batch.Records)-1].Seq); err != nil {
 			return sent, err
 		}
-		sent += len(recs)
+		sent += len(batch.Records)
 	}
 	return sent, nil
 }
