@@ -96,7 +96,7 @@ func ValidateAnalysis(f AnalysisFilter) error {
 	if f.Table != "minute" && f.Table != "hour" && f.Table != "day" {
 		return errors.New("无效统计粒度")
 	}
-	if f.From >= f.To {
+	if f.From > f.To {
 		return errors.New("无效时间范围")
 	}
 	switch f.Group {

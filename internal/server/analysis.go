@@ -243,7 +243,7 @@ func (s *Server) analysisPeriod(r *http.Request, now time.Time) (int64, int64, e
 	default:
 		return 0, 0, errors.New("未知日期范围")
 	}
-	if !to.After(from) {
+	if to.Before(from) || (from.Equal(to) && !to.Equal(now.Truncate(time.Minute))) {
 		return 0, 0, errors.New("查询日期尚未开始")
 	}
 	return from.Unix(), to.Unix(), nil
