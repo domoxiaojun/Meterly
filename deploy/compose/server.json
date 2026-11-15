@@ -2,7 +2,7 @@
   "listen": "0.0.0.0:8787",
   "db_path": "/data/meterly-v2.db",
   "panel_token_file": "/run/secrets/panel_token",
-  "tz": "Asia/Singapore",
+  "tz": "Asia/Shanghai",
   "reset_day": 9,
   "offline_after_minutes": 5,
   "trusted_proxies": [

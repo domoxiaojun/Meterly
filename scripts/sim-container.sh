@@ -32,7 +32,7 @@ sudo bash -c "( setpriv --reuid=65532 --regid=65532 --clear-groups --no-new-priv
   env -i bwrap --unshare-user --unshare-pid --unshare-ipc --unshare-uts --die-with-parent ${extra[*]} \
   --ro-bind $R/rootfs / --bind $R/data /data --ro-bind $R/secret/panel_token /run/secrets/panel_token \
   --tmpfs /tmp --proc /proc --dev /dev \
-  --setenv METERLY_CONFIG /etc/meterly/server.json --setenv TMPDIR /tmp --setenv TZ Asia/Singapore \
+  --setenv METERLY_CONFIG /etc/meterly/server.json --setenv TMPDIR /tmp --setenv TZ Asia/Shanghai \
   /meterly-server serve > $R/serve.log 2>&1 & )"
 sleep 3
 PID=$(pgrep -u 65532 -f '^/meterly-server serve' | tail -1)

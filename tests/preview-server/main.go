@@ -27,7 +27,7 @@ func main() {
 	}
 	defer os.RemoveAll(dir)
 	configPath := filepath.Join(dir, "server.json")
-	body, _ := json.Marshal(map[string]any{"listen": "127.0.0.1:18788", "db_path": filepath.Join(dir, "preview.db"), "tz": "Asia/Singapore", "geo": map[string]any{"auto_update": false}, "maintenance": map[string]any{"backups": false}})
+	body, _ := json.Marshal(map[string]any{"listen": "127.0.0.1:18788", "db_path": filepath.Join(dir, "preview.db"), "tz": "Asia/Shanghai", "geo": map[string]any{"auto_update": false}, "maintenance": map[string]any{"backups": false}})
 	if err = os.WriteFile(configPath, body, 0600); err != nil {
 		panic(err)
 	}
@@ -40,7 +40,7 @@ func main() {
 		panic(err)
 	}
 	defer st.Close()
-	loc := time.FixedZone("SGT", 8*3600)
+	loc := time.FixedZone("CST", 8*3600)
 	now := time.Date(2026, 11, 14, 15, 0, 0, 0, loc)
 	ctx := context.Background()
 	names := []string{"edge-sg-01", "core-hk-01", "relay-us-01", "edge-jp-01", "backup-eu-01"}
@@ -117,7 +117,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/preview", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"demo": true, "label": "演示工作区", "as_of": now.Unix(), "tz": "Asia/Singapore"})
+		json.NewEncoder(w).Encode(map[string]any{"demo": true, "label": "演示工作区", "as_of": now.Unix(), "tz": "Asia/Shanghai"})
 	})
 	mux.Handle("/", srv.Handler())
 	httpServer := &http.Server{Addr: cfg.Listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}

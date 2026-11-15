@@ -64,7 +64,7 @@ Meterly 管理自身 agent 的采集选项和升级，不提供代理订阅下�
 | `db_path` | 新部署模板使用 `/var/lib/meterly-server/meterly-v2.db`；省略时有旧路径兼容逻辑，部署应显式指定 |
 | `panel_token_file` | 面板口令文件，禁止组/其他用户访问；优先于 `METERLY_PANEL_TOKEN`，非回环监听必须配置口令 |
 | `agent_url` | 安装指引使用的 agent 可达地址，不是 Clash API 地址 |
-| `tz`、`reset_day` | 默认 `Asia/Singapore`、9；网站/IP 日期使用中心时区，主机计费另有自己的时区与周期 |
+| `tz`、`reset_day` | 默认 `Asia/Shanghai`、9；网站/IP 日期使用中心时区，主机计费另有自己的时区与周期 |
 | `offline_after_minutes` | 默认 5；中心统一计算在线状态 |
 | `trusted_proxies` | 仅用于中心反代来源识别；与 agent 网站日志里的可信代理配置分开 |
 | `retention` | 实际清理依据 `MinuteDetailHours`、`HourDays`；见下节 |

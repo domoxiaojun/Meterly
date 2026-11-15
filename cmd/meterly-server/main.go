@@ -31,7 +31,7 @@ import (
 
 const usage = `用法:
   meterly-server serve  [-config server.json]
-  meterly-server host add    NAME [-tz Asia/Singapore] [-reset-day 9] [-billing both|tx|rx|max] [-iface eth0] [-quota 2TiB] [-note 说明]
+  meterly-server host add    NAME [-tz Asia/Shanghai] [-reset-day 9] [-billing both|tx|rx|max] [-iface eth0] [-quota 2TiB] [-note 说明]
   meterly-server host rotate NAME     生成新 token(旧 token 立即失效)
   meterly-server host revoke NAME     吊销 token(保留历史数据)
   meterly-server host set    NAME [同 add 的选项]
@@ -144,7 +144,7 @@ func hostCmd(args []string) error {
 	}
 	fs := flag.NewFlagSet("host "+sub, flag.ExitOnError)
 	cfgPath := fs.String("config", "", "配置文件")
-	tz := fs.String("tz", "", "计费时区(默认 Asia/Singapore)")
+	tz := fs.String("tz", "", "计费时区(默认 Asia/Shanghai)")
 	rd := fs.Int("reset-day", 0, "计费重置日(默认 9)")
 	bill := fs.String("billing", "", "计费口径 both|tx|rx|max(默认 both)")
 	iface := fs.String("iface", "", "计费网卡(默认 eth0)")
@@ -216,7 +216,7 @@ func hostCmd(args []string) error {
 			}
 			seen := "-"
 			if h.LastSeen > 0 {
-				seen = time.Unix(h.LastSeen, 0).In(time.FixedZone("SGT", 8*3600)).Format("01-02 15:04 SGT")
+				seen = time.Unix(h.LastSeen, 0).In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04 MST")
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%d\t%s\t%s\n", h.Name, state, h.TZ, h.ResetDay, h.BillingMode, h.BillingIface, h.QuotaBytes, seen, h.AgentVersion)
 		}
@@ -256,7 +256,7 @@ func enrollCmd(args []string) error {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "已生成注册码,绑定主机 %s,有效至 %s,次数 %d。下面一行只显示这一次:\n",
-			rec.HostName, time.Unix(rec.ExpiresAt, 0).In(time.FixedZone("SGT", 8*3600)).Format("2006-01-02 15:04 MST"), rec.MaxUses)
+			rec.HostName, time.Unix(rec.ExpiresAt, 0).In(time.FixedZone("CST", 8*3600)).Format("2006-01-02 15:04 MST"), rec.MaxUses)
 		fmt.Println(code)
 	case "list":
 		list, err := st.ListEnroll(ctx, time.Now())
@@ -272,7 +272,7 @@ func enrollCmd(args []string) error {
 			} else if c.Exhausted {
 				stt = "已用完"
 			}
-			exp := time.Unix(c.ExpiresAt, 0).In(time.FixedZone("SGT", 8*3600)).Format("01-02 15:04")
+			exp := time.Unix(c.ExpiresAt, 0).In(time.FixedZone("CST", 8*3600)).Format("01-02 15:04")
 			rei := "否"
 			if c.Reissue {
 				rei = "是"

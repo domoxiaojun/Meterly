@@ -2,7 +2,7 @@
   "listen": "127.0.0.1:8787",
   "db_path": "/var/lib/meterly-server/meterly-v2.db",
   "panel_token_file": "/etc/meterly/panel.token",
-  "tz": "Asia/Singapore",
+  "tz": "Asia/Shanghai",
   "reset_day": 9,
   "offline_after_minutes": 5,
   "retention": {

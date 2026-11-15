@@ -63,7 +63,7 @@ func main() {
 	const mib = 1 << 20
 	for t := start.Add(time.Minute); !t.After(now); t = t.Add(time.Minute) {
 		ts := t.Unix()
-		h := float64(t.In(time.FixedZone("SGT", 8*3600)).Hour()) + float64(t.Minute())/60
+		h := float64(t.In(time.FixedZone("CST", 8*3600)).Hour()) + float64(t.Minute())/60
 		diurnal := 0.35 + 0.65*math.Pow(math.Max(0, math.Sin((h-9)/24*2*math.Pi)), 1.6) // 晚上高峰
 		var sbRX, sbTX float64
 		for _, s := range sources {
@@ -99,7 +99,7 @@ func main() {
 	}
 	cl := &http.Client{Timeout: 60 * time.Second}
 	for i := 0; i < len(recs); i += 4000 {
-		batch := proto.Batch{Meta: proto.Meta{Hostname: "demo", AgentVersion: "demo-m3", InstanceID: inst, Timezone: "Asia/Singapore", SentAt: time.Now().Unix(),
+		batch := proto.Batch{Meta: proto.Meta{Hostname: "demo", AgentVersion: "demo-m3", InstanceID: inst, Timezone: "Asia/Shanghai", SentAt: time.Now().Unix(),
 			Collectors: map[string]proto.CollectorHealth{
 				"netdev":  {Enabled: true, LastOK: now.Unix()},
 				"singbox": {Enabled: true, LastOK: now.Unix(), Note: "demo"},

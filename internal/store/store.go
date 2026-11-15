@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS hosts(
   token_hash    TEXT NOT NULL UNIQUE,          -- sha256(token) 十六进制;明文 token 不入库
   created_at    INTEGER NOT NULL,
   revoked_at    INTEGER NOT NULL DEFAULT 0,    -- >0 表示已吊销
-  tz            TEXT NOT NULL DEFAULT 'Asia/Singapore',
+  tz            TEXT NOT NULL DEFAULT 'Asia/Shanghai',
   reset_day     INTEGER NOT NULL DEFAULT 9,    -- 计费周期重置日
   billing_mode  TEXT NOT NULL DEFAULT 'both',  -- both|tx|rx|max
   billing_iface TEXT NOT NULL DEFAULT '',
@@ -250,7 +250,7 @@ func (s *Store) CreateHost(ctx context.Context, name string, o HostOpts) (string
 
 func (o *HostOpts) fill() {
 	if o.TZ == "" {
-		o.TZ = "Asia/Singapore"
+		o.TZ = "Asia/Shanghai"
 	}
 	if o.ResetDay == 0 {
 		o.ResetDay = 9

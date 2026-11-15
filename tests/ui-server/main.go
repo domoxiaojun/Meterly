@@ -28,7 +28,7 @@ func main() {
 	if e := os.WriteFile(tokenFile, []byte("local-browser-test-token"), 0600); e != nil {
 		panic(e)
 	}
-	body, _ := json.Marshal(map[string]any{"listen": "127.0.0.1:18787", "db_path": filepath.Join(dir, "db.sqlite"), "panel_token_file": tokenFile, "trusted_proxies": []string{"127.0.0.1/32"}, "tz": "Asia/Singapore", "geo": map[string]any{"auto_update": false}, "maintenance": map[string]any{"backups": false}})
+	body, _ := json.Marshal(map[string]any{"listen": "127.0.0.1:18787", "db_path": filepath.Join(dir, "db.sqlite"), "panel_token_file": tokenFile, "trusted_proxies": []string{"127.0.0.1/32"}, "tz": "Asia/Shanghai", "geo": map[string]any{"auto_update": false}, "maintenance": map[string]any{"backups": false}})
 	os.WriteFile(config, body, 0600)
 	cfg, e := server.LoadConfig(config)
 	if e != nil {
@@ -43,7 +43,7 @@ func main() {
 		panic(e)
 	}
 	defer st.Close()
-	now := time.Date(2026, 11, 11, 12, 30, 0, 0, time.FixedZone("SGT", 8*3600))
+	now := time.Date(2026, 11, 11, 12, 30, 0, 0, time.FixedZone("CST", 8*3600))
 	ctx := context.Background()
 	for _, name := range []string{"server-a", "server-b"} {
 		tok, e := st.CreateHost(ctx, name, store.HostOpts{BillingIface: "ens3", QuotaBytes: 1 << 40})
@@ -59,7 +59,7 @@ func main() {
 					if i%10 == 0 {
 						status = 503
 					}
-					ts := time.Date(2026, 11, day, hour, 1, 0, 0, time.FixedZone("SGT", 8*3600)).Unix()
+					ts := time.Date(2026, 11, day, hour, 1, 0, 0, time.FixedZone("CST", 8*3600)).Unix()
 					records = append(records, proto.Record{Seq: int64(len(records) + 1), TS: ts, Kind: "site", Dim1: "example.com", Dim2: fmt.Sprintf("198.51.100.%d", i), RX: uint64(i), TX: uint64(i * 1000), Site: &proto.SiteMetrics{Status: status, Requests: 1, RXKnown: true, IPSource: "remote_addr"}})
 				}
 			}

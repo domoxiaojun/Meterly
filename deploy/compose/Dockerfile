@@ -48,7 +48,7 @@ COPY --from=build --chown=65532:65532 /out/data /data
 COPY deploy/compose/server.json /etc/meterly/server.json
 ENV METERLY_CONFIG=/etc/meterly/server.json \
     TMPDIR=/tmp \
-    TZ=Asia/Singapore
+    TZ=Asia/Shanghai
 USER 65532:65532
 EXPOSE 8787
 VOLUME ["/data"]

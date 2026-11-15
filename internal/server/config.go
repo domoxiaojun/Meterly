@@ -20,7 +20,7 @@ type Config struct {
 	Listen         string            `json:"listen"`  // 默认 127.0.0.1:8787
 	DBPath         string            `json:"db_path"` // 默认 /var/lib/meterly-server/meterly.db(若不存在则回退 trafficstat.db)
 	PanelTokenFile string            `json:"panel_token_file,omitempty"`
-	TZ             string            `json:"tz"`                        // 面板展示时区,默认 Asia/Singapore
+	TZ             string            `json:"tz"`                        // 面板展示时区,默认 Asia/Shanghai
 	ResetDay       int               `json:"reset_day"`                 // 多机汇总视图默认周期重置日,默认 9
 	TrustedProxies []string          `json:"trusted_proxies,omitempty"` // 反代地址或 CIDR(取 X-Forwarded-For)
 	TLSCert        string            `json:"tls_cert,omitempty"`
@@ -82,7 +82,7 @@ func (c *Config) finish() error {
 		c.DBPath = compat.ServerDBPath()
 	}
 	if c.TZ == "" {
-		c.TZ = "Asia/Singapore"
+		c.TZ = "Asia/Shanghai"
 	}
 	if c.ResetDay == 0 {
 		c.ResetDay = 9
