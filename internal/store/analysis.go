@@ -360,7 +360,7 @@ func (s *Store) DataIssues(ctx context.Context, f AnalysisFilter) ([]string, err
 		// Recoverable site backlog is read from the latest host meta and is not stored.
 		_, hostArgs := inList(f.HostIDs)
 		args = append(args, hostArgs...)
-		q += ` UNION SELECT 'site: backlogged' FROM hosts WHERE id IN ` + in + ` AND json_extract(meta_json, '$.collectors.site.enabled') = 1 AND json_extract(meta_json, '$.collectors.site.backlogged') > 0`
+		q += ` UNION SELECT 'site: backlogged' FROM hosts WHERE id IN ` + in + ` AND json_extract(meta_json, '$.collectors.site.enabled') = 1 AND (json_extract(meta_json, '$.collectors.site.backlogged') > 0 OR json_extract(meta_json, '$.buffered') > 0)`
 	}
 	rows, e := s.R.QueryContext(ctx, q, args...)
 	if e != nil {
