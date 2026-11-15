@@ -238,7 +238,7 @@ func (s *Server) analysisPeriod(r *http.Request, now time.Time) (int64, int64, e
 			return 0, 0, errors.New("日期范围无效")
 		}
 		if to.After(now) {
-			to = now
+			to = now.Truncate(time.Minute)
 		}
 	default:
 		return 0, 0, errors.New("未知日期范围")
