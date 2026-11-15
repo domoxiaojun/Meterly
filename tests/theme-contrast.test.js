@@ -111,6 +111,9 @@ const textPairs = [
 ];
 
 const uiPairs = [
+  ['--input', '--background', 3],
+  ['--input', '--card', 3],
+  ['--input', '--popover', 3],
   ['--ring', '--background', 3],
   ['--ring', '--card', 3],
   ['--sidebar-ring', '--sidebar', 3],
@@ -169,9 +172,11 @@ test('document theme-color matches the light background token', () => {
   assert.equal(color[1].toLowerCase(), resolve(light, light['--background']).toLowerCase());
 });
 
-test('write contrast evidence without snapshotting stylesheets', () => {
-  const outDir = '/workspace/meterly-review-round3-20261115';
-  mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, 'theme-contrast.json'), `${JSON.stringify({ generated: 'theme-contrast.test.js', rows: contrastRows }, null, 2)}\n`);
+test('contrast evidence is available without a machine-specific output path', () => {
   assert.ok(contrastRows.length > 0);
+  const output = process.env.THEME_CONTRAST_REPORT;
+  if (output) {
+    mkdirSync(dirname(output), { recursive: true });
+    writeFileSync(output, `${JSON.stringify({ generated: 'theme-contrast.test.js', rows: contrastRows }, null, 2)}\n`);
+  }
 });
