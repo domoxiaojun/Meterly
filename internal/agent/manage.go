@@ -255,6 +255,21 @@ func (a *Agent) RefreshConfiguration(ctx context.Context, force bool) error {
 		fresh := NewSiteAcc(next.Collectors.Site, a.st.SiteOffsets)
 		if a.site != nil {
 			fresh.files = a.site.files
+			oldSrc := a.site.cfg.Sources
+			newSrc := fresh.cfg.Sources
+			if len(oldSrc) > 0 && len(newSrc) > 0 {
+				idx := map[string]int{}
+				for i, s := range newSrc {
+					idx[s.Path] = i
+				}
+				start := a.site.next % len(oldSrc)
+				for i := 0; i < len(oldSrc); i++ {
+					if n, ok := idx[oldSrc[(start+i)%len(oldSrc)].Path]; ok {
+						fresh.next = n
+						break
+					}
+				}
+			}
 		}
 		a.site = fresh
 	} else {
