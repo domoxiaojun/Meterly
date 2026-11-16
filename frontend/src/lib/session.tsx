@@ -19,6 +19,24 @@ export function useSession() {
   return session
 }
 
+const relativePaths = new Set(['/api/v2/overview', '/api/v2/analytics/series', '/api/v2/analytics/rank'])
+const relativePeriods = new Set(['today', 'yesterday', 'previous', 'last7d', 'last30d'])
+
+export function calendarDayKey(epochSeconds: number, tz: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(epochSeconds * 1000))
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? ''
+  return `${pick('year')}-${pick('month')}-${pick('day')}`
+}
+
+export function isRelativeQueryKey(queryKey: readonly unknown[]): boolean {
+  if (queryKey[0] !== 'meterly' || typeof queryKey[1] !== 'string') return false
+  let url: URL
+  try { url = new URL(queryKey[1], 'http://meterly.invalid') } catch { return false }
+  if (url.origin !== 'http://meterly.invalid' || !relativePaths.has(url.pathname)) return false
+  const period = url.searchParams.get('period')
+  return period === null || relativePeriods.has(period)
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const client = useQueryClient()
   const [session, setSession] = useState<Session | null>()
@@ -26,6 +44,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [attempt, setAttempt] = useState(0)
   const [elapsed, setElapsed] = useState(0)
   const receivedAt = useRef(Date.now())
+  const observedDay = useRef<string | null>(null)
 
   function accept(value: Session) { receivedAt.current = Date.now(); setElapsed(0); setSession(value); setError('') }
   function clear() { void client.cancelQueries(); client.clear(); setSession(null); setError('') }
@@ -46,6 +65,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - receivedAt.current) / 1000)), 30_000)
     return () => clearInterval(timer)
   }, [])
+  useEffect(() => {
+    if (!session) { observedDay.current = null; return }
+    const dayKey = session.tz + calendarDayKey(session.now + (demo ? 0 : elapsed), session.tz)
+    const previous = observedDay.current
+    observedDay.current = dayKey
+    if (previous !== null && previous !== dayKey) void client.invalidateQueries({ predicate: q => isRelativeQueryKey(q.queryKey) })
+  }, [client, session, elapsed])
 
   async function login(token: string) {
     await request('/api/login', okSchema, undefined, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) })
