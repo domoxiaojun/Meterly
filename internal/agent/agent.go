@@ -404,6 +404,13 @@ func (a *Agent) snapshotBatch() (proto.Batch, error) {
 		return proto.Batch{}, err
 	}
 	left := a.buf.Count() - int64(len(recs))
+	// AppendChunks 可能只落盘前缀。LastSeq 含已确认记录，只加 Seq 超过该水位的未写入后缀。
+	last := a.buf.LastSeq()
+	for _, r := range a.st.Pending {
+		if r.Seq > last {
+			left++
+		}
+	}
 	return proto.Batch{Meta: a.metaLocked(left), Records: recs}, nil
 }
 
