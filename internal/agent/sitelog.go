@@ -221,15 +221,23 @@ func (a *SiteAcc) Collect() (recs []Counter, stats siteTickStats, err error) {
 			}
 			if f == nil {
 				recordError(fmt.Errorf("轮转日志尚有未确认断点但文件不可访问: %s", src.Path))
+				stats.Backlogged++
 				continue
 			}
 			before := c.Offset
 			e := a.readFile(src, f, &c, agg, &budget, &stats)
 			recordError(e)
-			if c.Offset == before && budget > 0 {
+			eof := false
+			if st, se := f.Stat(); se == nil && st.Size() <= c.Offset {
+				eof = true
+			}
+			if eof && c.Offset == before {
 				c.EmptyReads++
 			} else {
 				c.EmptyReads = 0
+			}
+			if !eof {
+				stats.Backlogged++
 			}
 			a.offsets[key] = c
 			if c.EmptyReads >= 2 {
@@ -273,8 +281,12 @@ func (a *SiteAcc) Collect() (recs []Counter, stats siteTickStats, err error) {
 			if old != nil {
 				a.files[key] = old
 				recordError(a.readFile(src, old, &c, agg, &budget, &stats))
+				if st, se := old.Stat(); se != nil || st.Size() > c.Offset {
+					stats.Backlogged++
+				}
 			} else {
 				recordError(fmt.Errorf("无法补读轮转日志: %s", src.Path))
+				stats.Backlogged++
 			}
 			a.offsets[key] = c
 			delete(a.files, src.Path)

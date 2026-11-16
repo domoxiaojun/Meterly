@@ -46,12 +46,13 @@ type Record struct {
 
 // CollectorHealth 采集器健康度。
 type CollectorHealth struct {
-	Enabled bool   `json:"enabled"`
-	LastOK  int64  `json:"last_ok"`
-	Fails   int    `json:"fails"`              // 连续失败次数
-	LastErr string `json:"last_err,omitempty"` // 最近错误(已脱敏)
-	ErrAt   int64  `json:"err_at,omitempty"`
-	Note    string `json:"note,omitempty"` // 例如 sing-box 版本/重启次数
+	Enabled    bool   `json:"enabled"`
+	LastOK     int64  `json:"last_ok"`
+	Fails      int    `json:"fails"`              // 连续失败次数
+	LastErr    string `json:"last_err,omitempty"` // 最近错误(已脱敏)
+	ErrAt      int64  `json:"err_at,omitempty"`
+	Note       string `json:"note,omitempty"` // 例如 sing-box 版本/重启次数
+	Backlogged int    `json:"backlogged,omitempty"`
 }
 
 // Meta 主机元数据,随每次推送附带。

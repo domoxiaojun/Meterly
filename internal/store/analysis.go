@@ -355,7 +355,14 @@ func (s *Store) Coverage(ctx context.Context, ids []int64, kind string) (int64, 
 func (s *Store) DataIssues(ctx context.Context, f AnalysisFilter) ([]string, error) {
 	in, args := inList(f.HostIDs)
 	args = append(args, f.From, f.To)
-	rows, e := s.R.QueryContext(ctx, `SELECT DISTINCT reason FROM data_issues WHERE host_id IN `+in+` AND to_ts>? AND from_ts<?`, args...)
+	q := `SELECT DISTINCT reason FROM data_issues WHERE host_id IN ` + in + ` AND to_ts>? AND from_ts<?`
+	if f.Source == "site" {
+		// Recoverable site backlog is read from the latest host meta and is not stored.
+		_, hostArgs := inList(f.HostIDs)
+		args = append(args, hostArgs...)
+		q += ` UNION SELECT 'site: backlogged' FROM hosts WHERE id IN ` + in + ` AND json_extract(meta_json, '$.collectors.site.enabled') = 1 AND (json_extract(meta_json, '$.collectors.site.backlogged') > 0 OR json_extract(meta_json, '$.buffered') > 0)`
+	}
+	rows, e := s.R.QueryContext(ctx, q, args...)
 	if e != nil {
 		return nil, e
 	}

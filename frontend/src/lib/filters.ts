@@ -12,9 +12,13 @@ const filterSchema = z.object({
 export type Filters = z.infer<typeof filterSchema>
 export const parseFilters = (value: unknown) => filterSchema.parse(value)
 export const defaults = parseFilters({})
+export function normalizeFilters(path: string, state: Filters): Filters {
+  if (path !== '/' && path !== '/overview') return state
+  return { ...state, ip: '', site: '', status: '', search: '', country: '', asn: '', source: 'site', page: 1 }
+}
 export function href(path: string, state: Filters, patch: Partial<Filters> = {}) {
   const params = new URLSearchParams()
-  for (const [key, value] of Object.entries({ ...state, ...patch })) if (value !== '') params.set(key, String(value))
+  for (const [key, value] of Object.entries(normalizeFilters(path, { ...state, ...patch }))) if (value !== '') params.set(key, String(value))
   return `#${path}?${params}`
 }
 export function validateFilters(s: Filters): string {
