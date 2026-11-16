@@ -95,8 +95,8 @@ export function AnalysisPage({ filter, path, onChange }: { filter: Filters; path
   const group = sitePage && !detail ? 'site' : 'ip'
   const f = { ...filter, source, group, page_size: 10, ...(sitePage && detail ? { site: identity } : {}), ...(!sitePage && detail ? { ip: identity, page: 1, search: '' } : {}) }
   const rank = useAPI(`/api/v2/analytics/rank?${query(f)}`, rankSchema)
-  const series = useAPI(`/api/v2/analytics/series?${query(f)}`, seriesSchema)
-  const associated = useAPI(`/api/v2/analytics/rank?${query({ ...f, group: sitePage ? 'status' : source === 'singbox' ? 'inbound' : 'site', page: !sitePage && detail ? filter.page : 1, ...(sitePage ? { status: '' } : {}) })}`, rankSchema)
+  const series = useAPI(`/api/v2/analytics/series?${query(f)}`, seriesSchema, { enabled: detail })
+  const associated = useAPI(`/api/v2/analytics/rank?${query({ ...f, group: sitePage ? 'status' : source === 'singbox' ? 'inbound' : 'site', page: !sitePage && detail ? filter.page : 1, ...(sitePage ? { status: '' } : {}) })}`, rankSchema, { enabled: detail })
   if (!rank.data) return <QueryState loading={rank.isPending} error={rank.error} onRetry={() => rank.refetch()} />
   const d = rank.data
   const row = !sitePage && detail ? d.rows[0] : undefined
